@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep instance text and other overrides when a `.fig` file is reopened in the editor. Overrides read from the file were not recorded as overrides, so the first component sync replaced them with the main component's values.
+
 ## 0.15.1 — 2026-09-18
 
 ### Added

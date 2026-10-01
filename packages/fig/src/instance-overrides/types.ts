@@ -120,6 +120,8 @@ export interface OverrideContext {
   componentIdRoot: Map<string, string>
   swappedInstances: Set<string>
   protectedFields: ProtectionMap
+  /** Fields each stored symbol override applied, keyed by target node id. */
+  appliedOverrideFields: Map<string, Set<string>>
   /** Nodes whose kiwi NC has explicit property values (cornerRadius, visibility, etc.) */
   kiwiPropertyNodes: Set<string>
   /** Nodes whose Figma-derived geometry should not be overwritten by clone propagation. */

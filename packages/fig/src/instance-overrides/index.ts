@@ -36,7 +36,7 @@ import {
 } from './derived-symbol-data/propagate'
 import { populateInstances } from './populate'
 import { preComputeRoots } from './resolve'
-import { applySymbolOverrides } from './symbol/overrides'
+import { applySymbolOverrides, recordAppliedSymbolOverrides } from './symbol/overrides'
 import { propagateNodePropsTransitively, propagateOverridesTransitively } from './sync'
 import { indexCloneNodes } from './sync/sources'
 import type { InstanceNodeChange, OverrideContext, ComponentPropValue } from './types'
@@ -269,6 +269,7 @@ function buildOverrideContext(
     componentIdRoot: new Map(),
     swappedInstances: new Set(),
     protectedFields: new Map(),
+    appliedOverrideFields: new Map(),
     kiwiPropertyNodes,
     geometryOverrideNodes,
     activeNodeIds
@@ -396,4 +397,5 @@ export function populateAndApplyOverrides(
   reconcileEffectiveCloneGeometry(ctx, scaledInstances)
   applyResolvedNumericBindings(graph, ctx.activeNodeIds)
   applyGeneratedFreeformStretch(ctx)
+  recordAppliedSymbolOverrides(ctx)
 }

@@ -1,4 +1,10 @@
-import { hasInstanceOverride } from '@open-pencil/scene-graph'
+import {
+  cloneInstanceOverrideState,
+  hasInstanceOverride,
+  INSTANCE_SYNC_FIELDS,
+  setInstanceOverride,
+  type SceneNode
+} from '@open-pencil/scene-graph'
 
 import { applyOverridePatch } from '../patches'
 import { resolveOverrideTarget } from '../resolve'
@@ -78,7 +84,72 @@ export function applySymbolOverrides(ctx: OverrideContext, propertiesOnly = fals
       if (!patch.swapComponentId && !patch.props) continue
       overriddenNodes.add(targetId)
       applyOverridePatch(ctx, patch)
+      rememberAppliedFields(ctx, targetId, patch)
     }
   }
   return overriddenNodes
+}
+
+const SYNC_FIELDS: ReadonlySet<string> = new Set(INSTANCE_SYNC_FIELDS)
+
+function rememberAppliedFields(
+  ctx: OverrideContext,
+  targetId: string,
+  patch: NonNullable<ReturnType<typeof patchFromSymbolOverride>>
+): void {
+  if (!patch.props) return
+  const fields = Object.keys(patch.props).filter((field) => SYNC_FIELDS.has(field))
+  if (fields.length === 0) return
+  let applied = ctx.appliedOverrideFields.get(targetId)
+  if (!applied) {
+    applied = new Set()
+    ctx.appliedOverrideFields.set(targetId, applied)
+  }
+  for (const field of fields) applied.add(field)
+}
+
+function nearestInstance(ctx: OverrideContext, nodeId: string): SceneNode | undefined {
+  let current = ctx.graph.getNode(nodeId)
+  while (current) {
+    if (current.type === 'INSTANCE') return current
+    current = current.parentId ? ctx.graph.getNode(current.parentId) : undefined
+  }
+  return undefined
+}
+
+/**
+ * Records every field a stored symbol override set as an instance override,
+ * the same way a live edit does (recordInstanceOverride: keyed on the nearest
+ * INSTANCE ancestor). Without this, the first component sync in a live editor
+ * treats imported override values as inherited and copies the main
+ * component's values over them. Runs once, after the last override pass, so
+ * dropLiveOverriddenFields still lets this pass's replay re-apply values.
+ */
+export function recordAppliedSymbolOverrides(ctx: OverrideContext): void {
+  const pending = new Map<SceneNode, [string, Set<string>][]>()
+  for (const [targetId, fields] of ctx.appliedOverrideFields) {
+    const instance = nearestInstance(ctx, targetId)
+    if (!instance) continue
+    const entries = pending.get(instance) ?? []
+    entries.push([targetId, fields])
+    pending.set(instance, entries)
+  }
+
+  for (const [instance, entries] of pending) {
+    // A fresh state object, so population deltas see the change.
+    const instanceOverrides = cloneInstanceOverrideState(instance.instanceOverrides)
+    let changed = false
+    for (const [targetId, fields] of entries) {
+      for (const field of fields) {
+        if (hasInstanceOverride(ctx.graph, targetId, field)) continue
+        setInstanceOverride(instanceOverrides, instance.id, targetId, field)
+        changed = true
+      }
+    }
+    if (!changed) continue
+    ctx.graph.preserveSourceMetadataDuring(() =>
+      ctx.graph.updateNode(instance.id, { instanceOverrides })
+    )
+  }
+  ctx.appliedOverrideFields.clear()
 }
