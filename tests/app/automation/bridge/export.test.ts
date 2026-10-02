@@ -123,4 +123,26 @@ describe('automation export of a page that is not on screen', () => {
     expect(pngSize(resultBytes(response))).toEqual({ width: 70, height: 35 })
     expect(store.state.currentPageId).toBe(shown)
   })
+
+  test('a page export lays out the target page first', async () => {
+    const store = await storeWithCanvas()
+    const shown = store.state.currentPageId
+    const other = store.graph.addPage('Other').id
+    // Not laid out yet: the row hugs one 80 px child but still says 10 px, and clips.
+    const row = store.graph.createNode('FRAME', other, {
+      width: 10,
+      height: 20,
+      fills: [RED],
+      clipsContent: true,
+      layoutMode: 'HORIZONTAL',
+      primaryAxisSizing: 'HUG',
+      counterAxisSizing: 'FIXED'
+    })
+    store.graph.createNode('FRAME', row.id, { width: 80, height: 20, fills: [RED] })
+
+    const response = await handleExport(target(store, other), { scope: 'page' })
+
+    expect(pngSize(resultBytes(response))).toEqual({ width: 80, height: 20 })
+    expect(store.state.currentPageId).toBe(shown)
+  })
 })

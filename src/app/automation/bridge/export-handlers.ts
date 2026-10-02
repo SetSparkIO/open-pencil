@@ -13,8 +13,9 @@ async function exportNodeIds(target: AutomationTarget, args: ExportArgs | undefi
   const store = target.store
   if (args?.nodeIds) return args.nodeIds
   if (args?.scope !== 'page') return [...store.state.selectedIds]
-  // A `.fig` page gets its layers when first shown; load them without showing it.
-  await store.loadPageNodes(target.pageId)
+  // A `.fig` page gets its layers, fonts and layout when first shown; prepare them without
+  // showing it, so text and auto layout render as they do on screen.
+  await store.preparePageNodes(target.pageId)
   return store.graph.getChildren(target.pageId).map((node) => node.id)
 }
 

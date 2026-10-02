@@ -29,6 +29,8 @@ const DOCUMENT: AutomationDocumentSummary = {
 let server: Server
 let requests: RPCRequest[] = []
 let dir: string
+let discoveryDir: string
+const savedDiscoveryPath = process.env.OPENPENCIL_MCP_DISCOVERY_PATH
 
 function reply(command: string): unknown {
   if (command === 'list_documents') return { documents: [DOCUMENT] }
@@ -37,6 +39,9 @@ function reply(command: string): unknown {
 }
 
 beforeAll(async () => {
+  // Our own discovery file, so a running app's record is neither replaced nor removed.
+  discoveryDir = await mkdtemp(join(tmpdir(), 'open-pencil-export-discovery-'))
+  process.env.OPENPENCIL_MCP_DISCOVERY_PATH = join(discoveryDir, 'mcp.json')
   server = createServer((request, response) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -66,6 +71,9 @@ afterAll(async () => {
     server.close(() => resolve())
   })
   await removeDiscoveryFile()
+  if (savedDiscoveryPath === undefined) delete process.env.OPENPENCIL_MCP_DISCOVERY_PATH
+  else process.env.OPENPENCIL_MCP_DISCOVERY_PATH = savedDiscoveryPath
+  await rm(discoveryDir, { recursive: true, force: true })
 })
 
 beforeEach(async () => {
