@@ -71,6 +71,7 @@
 - Export layers from a page other than the one on screen with the MCP `export_image` tool and with `openpencil export --node` against the running app, which failed with "Raster export selection must stay on a single page".
 - Export the requested page with `openpencil export --page` or `--page-id` against the running app, which ignored the page and exported the selection on screen. A page that has not been shown yet gets its layers, fonts and layout for the export without switching to it.
 - Keep round and other stroke caps and joins on icons from `insert_icon` and the icon picker, and on vectors from `import_svg`, after saving and reopening the file. They were set only on the stroke paint, which `.fig` does not store, so outline icons such as Lucide's reopened with butt caps and miter joins and showed gaps where their strokes meet.
+- Keep the holes in filled icons from `insert_icon` and the icon picker, and in filled paths from `import_svg`, when a path mixes open and closed subpaths. SVG fills every subpath as if it were closed, but open subpaths were filled on their own, so their holes, such as the cut-outs in some Font Awesome icons, were filled in.
 
 ### Performance
 
