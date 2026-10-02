@@ -1,4 +1,3 @@
-import { renderTree } from '@open-pencil/core/design-jsx'
 import type { FigmaAPI } from '@open-pencil/core/figma-api'
 import {
   ALL_TOOLS,
@@ -16,40 +15,10 @@ import { useLibraryService } from '@/app/libraries'
 type FigmaFactory = (store: AutomationTarget['store'], pageId?: string) => FigmaAPI
 
 export function createAutomationToolHandler(makeFigma: FigmaFactory) {
-  async function handleToolRender(
-    target: AutomationTarget,
-    toolArgs: Record<string, unknown>
-  ): Promise<unknown> {
-    const store = target.store
-    const tree = toolArgs.tree as Parameters<typeof renderTree>[1]
-    const result = await store.runMutationWithLayout(
-      () =>
-        renderTree(store.graph, tree, {
-          parentId: (toolArgs.parent_id as string | undefined) ?? target.pageId,
-          x: toolArgs.x as number | undefined,
-          y: toolArgs.y as number | undefined
-        }),
-      target.pageId,
-      async (node) => {
-        await ensureGraphFonts(store.graph, [node.id], store.renderer)
-      }
-    )
-    store.requestRender()
-    store.flashNodes([result.id])
-    return {
-      ok: true,
-      result: { id: result.id, name: result.name, type: result.type, children: result.childIds }
-    }
-  }
-
   return async function handleTool(target: AutomationTarget, args: unknown): Promise<unknown> {
     const toolName = (args as { name?: string }).name
     const toolArgs = (args as { args?: Record<string, unknown> }).args ?? {}
     if (!toolName) throw new Error('Missing "name" in args')
-
-    if (toolName === 'render' && toolArgs.tree) {
-      return handleToolRender(target, toolArgs)
-    }
 
     const def = ALL_TOOLS.find((t) => t.name === toolName && isToolExposed(t, 'mcp'))
     if (!def) throw new Error(`Unknown tool: ${toolName}`)

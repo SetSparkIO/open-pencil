@@ -14,10 +14,12 @@ import { createToolDescriptors, getMCPToolDefinitions } from '#mcp/tool/manifest
 
 import {
   connectMockBrowser,
+  tcpRequest,
   waitForBrowserRegistration,
   type HealthResponse,
   type MockBrowser
 } from '#tests/helpers/mcp/server'
+import { addTestColorVariable } from '#tests/helpers/scene'
 
 const isUnix = process.platform !== 'win32'
 const SOCKET_DIR = join(tmpdir(), `openpencil-test-server-${process.pid}`)
@@ -143,6 +145,7 @@ describe('startServer option validation', () => {
 describe('MCP server', () => {
   let client: Client
   let graph: SceneGraph
+  let httpPort: number
   let cleanup: (() => Promise<void>) | null = null
 
   beforeEach(async () => {
@@ -150,6 +153,7 @@ describe('MCP server', () => {
       const ctx = await createTestClient()
       client = ctx.client
       graph = ctx.graph
+      httpPort = ctx.handle.httpPort ?? 0
       cleanup = ctx.close
     } catch (e) {
       if (cleanup) await cleanup().catch(() => undefined)
@@ -243,6 +247,56 @@ describe('MCP server', () => {
     const node = graph.getNode(data.id)
     expect(node).toBeDefined()
     expect(node?.name).toBe('Test')
+  })
+
+  async function renderOverRPC(args: Record<string, unknown>): Promise<string> {
+    const response = await tcpRequest(
+      httpPort,
+      'POST',
+      '/rpc',
+      { command: 'tool', args: { name: 'render', args } },
+      { Authorization: `Bearer ${TEST_CLIENT_AUTH_TOKEN}` }
+    )
+    const body = response.data as { ok?: boolean; result?: { id: string }; error?: string }
+    expect(body.error).toBeUndefined()
+    expect(response.status).toBe(200)
+    return body.result?.id ?? ''
+  }
+
+  test('render keeps design variable bindings over MCP and /rpc', async () => {
+    addTestColorVariable(graph, 'var-primary', 'Brand/primary')
+    const jsx = `<Frame w={100} h={100} fill={designVar('Brand/primary')} />`
+
+    const viaMCP = await client.callTool({ name: 'render', arguments: { jsx } })
+    expect(viaMCP.isError).not.toBe(true)
+    const mcpNode = graph.getNode((parseResult(viaMCP) as { id: string }).id)
+    expect(mcpNode?.boundVariables['fills/0/color']).toBe('var-primary')
+
+    // The stdio bridge and the CLI reach the app through /rpc, which crosses JSON twice.
+    const rpcNode = graph.getNode(await renderOverRPC({ jsx }))
+    expect(rpcNode?.boundVariables['fills/0/color']).toBe('var-primary')
+    expect(rpcNode?.fills[0]?.type).toBe('SOLID')
+  })
+
+  test('render over /rpc honors insert_index and replace_id', async () => {
+    const rowId = await renderOverRPC({
+      jsx: `<Frame name="Row" flex="row"><Frame name="A" w={10} h={10} /><Frame name="B" w={10} h={10} /></Frame>`
+    })
+    const names = () => (graph.getNode(rowId)?.childIds ?? []).map((id) => graph.getNode(id)?.name)
+
+    await renderOverRPC({
+      jsx: `<Frame name="First" w={10} h={10} />`,
+      parent_id: rowId,
+      insert_index: 0
+    })
+    expect(names()).toEqual(['First', 'A', 'B'])
+
+    const replaceId = graph.getNode(rowId)?.childIds[1]
+    await renderOverRPC({
+      jsx: `<Frame name="Replacement" w={10} h={10} />`,
+      replace_id: replaceId
+    })
+    expect(names()).toEqual(['First', 'Replacement', 'B'])
   })
 
   test('set_fill validates and applies color', async () => {
