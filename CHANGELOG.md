@@ -68,6 +68,7 @@
 - Load the Medium, Semibold, Bold, and other styles of installed variable fonts such as SF Pro on macOS instead of reporting them as substituted (#752).
 - Ship the MIT license text in every published npm package, and add READMEs for `@open-pencil/core`, `@open-pencil/cli`, and `@open-pencil/mcp` on npm.
 - Keep round and other stroke caps and joins on icons from `insert_icon` and the icon picker, and on vectors from `import_svg`, after saving and reopening the file. They were set only on the stroke paint, which `.fig` does not store, so outline icons such as Lucide's reopened with butt caps and miter joins and showed gaps where their strokes meet.
+- Keep the holes in filled icons from `insert_icon` and the icon picker, and in filled paths from `import_svg`, when a path mixes open and closed subpaths. SVG fills every subpath as if it were closed, but open subpaths were filled on their own, so their holes, such as the cut-outs in some Font Awesome icons, were filled in.
 
 ### Performance
 
