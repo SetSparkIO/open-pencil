@@ -100,10 +100,32 @@ describe('@open-pencil/fig package API', () => {
       const second = writeFigArchive(input)
 
       expect(second).toEqual(first)
-      // The first local file header holds the entry's DOS time at offset 10 and date at 12.
-      const header = new DataView(first.buffer, first.byteOffset)
-      expect(header.getUint16(10, true)).toBe(0)
-      expect(header.getUint16(12, true)).toBe((1 << 5) | 1)
+      // Walk the central directory from the end record (no archive comment, so the last 22
+      // bytes) and check the DOS time and date of every entry there and in its local header.
+      const view = new DataView(first.buffer, first.byteOffset, first.byteLength)
+      const end = first.byteLength - 22
+      expect(view.getUint32(end, true)).toBe(0x06054b50)
+      const entries = view.getUint16(end + 10, true)
+      expect(entries).toBe(4)
+      let at = view.getUint32(end + 16, true)
+      for (let i = 0; i < entries; i++) {
+        expect(view.getUint32(at, true)).toBe(0x02014b50)
+        expect([view.getUint16(at + 12, true), view.getUint16(at + 14, true)]).toEqual([
+          0,
+          (1 << 5) | 1
+        ])
+        const local = view.getUint32(at + 42, true)
+        expect(view.getUint32(local, true)).toBe(0x04034b50)
+        expect([view.getUint16(local + 10, true), view.getUint16(local + 12, true)]).toEqual([
+          0,
+          (1 << 5) | 1
+        ])
+        at +=
+          46 +
+          view.getUint16(at + 28, true) +
+          view.getUint16(at + 30, true) +
+          view.getUint16(at + 32, true)
+      }
     } finally {
       setSystemTime()
     }
