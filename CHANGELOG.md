@@ -37,6 +37,7 @@
 
 ### Changed
 
+- Save an unchanged `.fig` file to the same bytes every time: `meta.json` no longer records the save time, and every archive entry carries the fixed date 1980-01-01, so a document kept in Git shows no change until its content does.
 - Keep the Share button labeled Share while you are in a room, instead of turning it into a Connected status; a green dot on your avatar shows the room is live.
 - Show Flatten, Outline text, and Outline stroke in the canvas context menu without icons, like every other item there.
 - Keep an AI chat working on the page where it started when you switch to another page, instead of sending its next edits to whichever page is on screen. When the AI switches pages itself, your view follows.

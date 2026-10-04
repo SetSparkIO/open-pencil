@@ -38,8 +38,11 @@ pub fn build_fig_file(
 
     let buf = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buf);
-    let options =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    // A fixed entry time (1980-01-01 00:00, the ZIP minimum) keeps an unchanged document's
+    // bytes the same across saves, as the browser export does.
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored)
+        .last_modified_time(zip::DateTime::default());
 
     zip.start_file("canvas.fig", options)
         .map_err(|e| e.to_string())?;

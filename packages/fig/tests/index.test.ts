@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it, setSystemTime } from 'bun:test'
 
 import {
   FIG_PACKAGE_STATUS,
@@ -74,6 +74,39 @@ describe('@open-pencil/fig package API', () => {
     expect(parsed.images).toEqual([['hash', new Uint8Array([9, 8, 7])]])
     expect(parsed.thumbnailPNG).toEqual(thumbnailPNG)
     expect(parsed.metaJSON).toBe(metaJSON)
+  })
+
+  it('writes the same archive bytes at any time, with every entry dated 1980-01-01', () => {
+    const input = {
+      schemaDeflated: deflateSync(getSchemaBytes()),
+      kiwiData: encodeMessage(
+        createNodeChangesMessage(0, 0, [
+          {
+            guid: { sessionID: 0, localID: 0 },
+            type: 'DOCUMENT',
+            phase: 'CREATED',
+            name: 'Document'
+          }
+        ])
+      ),
+      thumbnailPNG: new Uint8Array([...PNG_SIGNATURE, 1, 2, 3]),
+      metaJSON: '{"version":1}',
+      images: [{ name: 'images/hash', data: new Uint8Array([9, 8, 7]) }]
+    }
+    try {
+      setSystemTime(new Date('2026-01-02T03:04:05Z'))
+      const first = writeFigArchive(input)
+      setSystemTime(new Date('2027-06-07T22:09:10Z'))
+      const second = writeFigArchive(input)
+
+      expect(second).toEqual(first)
+      // The first local file header holds the entry's DOS time at offset 10 and date at 12.
+      const header = new DataView(first.buffer, first.byteOffset)
+      expect(header.getUint16(10, true)).toBe(0)
+      expect(header.getUint16(12, true)).toBe((1 << 5) | 1)
+    } finally {
+      setSystemTime()
+    }
   })
 
   it('parses legacy raw fig-kiwi files and preserves their thumbnail chunk', () => {
