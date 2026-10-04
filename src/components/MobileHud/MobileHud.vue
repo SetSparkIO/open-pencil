@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { COLLABORATION_AVAILABLE } from '@/app/collab/availability'
 import { provideMobileHud } from '@/components/MobileHud/context'
 import MobileActionToast from '@/components/MobileHud/MobileActionToast.vue'
 import MobileActiveToolBadge from '@/components/MobileHud/MobileActiveToolBadge.vue'
@@ -26,7 +27,7 @@ provideMobileHud()
     </div>
 
     <div class="pointer-events-auto flex items-center gap-1.5">
-      <MobileShareButton />
+      <MobileShareButton v-if="COLLABORATION_AVAILABLE" />
       <MobileFileMenu />
     </div>
   </div>
