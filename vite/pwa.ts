@@ -7,7 +7,10 @@ export function openPencilPwaPlugin() {
     workbox: {
       maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
       globPatterns: ['**/*.{js,css,html,wasm,png,svg,ico,ttf,webmanifest}'],
-      navigateFallback: '/index.html'
+      navigateFallback: '/index.html',
+      // A sign-in proxy in front of the editor (oauth2-proxy, for one) owns /oauth2/*. Its
+      // callback must reach the server, not the cached shell, or the sign-in never finishes.
+      navigateFallbackDenylist: [/^\/oauth2\//]
     },
     manifest: {
       name: 'OpenPencil',
