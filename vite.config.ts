@@ -5,12 +5,13 @@ import vue from '@vitejs/plugin-vue'
 import IconsResolver from 'unplugin-icons/resolver'
 import Icons from 'unplugin-icons/vite'
 import Components from 'unplugin-vue-components/vite'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
 import { ensureBrandAssets } from '@open-pencil/brand-tools'
 
 import packageJson from './package.json'
 import { viteBuildTarget } from './src/app/shell/support/baseline'
+import { serviceWorkerEnabled } from './src/app/shell/support/service-worker'
 import { createOpenPencilAliases } from './vite/aliases'
 import {
   localAutomationRoute,
@@ -25,8 +26,9 @@ import { createDevServerOptions } from './vite/server'
 const host = process.env.TAURI_DEV_HOST
 const automationRoute = localAutomationRoute(host)
 
-export default defineConfig(async ({ command }) => {
+export default defineConfig(async ({ command, mode }) => {
   await ensureBrandAssets(['web'])
+  const env = loadEnv(mode, __dirname, 'VITE_')
   return {
     resolve: {
       alias: createOpenPencilAliases(__dirname)
@@ -49,7 +51,9 @@ export default defineConfig(async ({ command }) => {
       Components({ resolvers: [IconsResolver({ prefix: 'icon' })] }),
       openPencilAutomationPlugin(command, host),
       vue(),
-      openPencilPwaPlugin()
+      openPencilPwaPlugin({
+        serviceWorker: serviceWorkerEnabled(env.VITE_OPENPENCIL_SERVICE_WORKER)
+      })
     ],
     clearScreen: false,
     build: {

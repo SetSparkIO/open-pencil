@@ -1,8 +1,13 @@
 import { VitePWA } from 'vite-plugin-pwa'
 
-export function openPencilPwaPlugin() {
+/**
+ * With `serviceWorker` false (`VITE_OPENPENCIL_SERVICE_WORKER=off`) the build emits a
+ * self-destroying `/sw.js` in place of the Workbox worker, and `boot.ts` registers nothing.
+ */
+export function openPencilPwaPlugin({ serviceWorker = true }: { serviceWorker?: boolean } = {}) {
   return VitePWA({
     registerType: 'autoUpdate',
+    selfDestroying: !serviceWorker,
     devOptions: { enabled: false },
     workbox: {
       maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,

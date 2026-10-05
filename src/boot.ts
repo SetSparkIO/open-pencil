@@ -7,6 +7,7 @@ import './app.css'
 import { preloadFonts } from '@/app/editor/fonts'
 import { observeBootErrors } from '@/app/shell/support/boot'
 import { reportBootFailure } from '@/app/shell/support/gate'
+import { serviceWorkerEnabled } from '@/app/shell/support/service-worker'
 import { IS_TAURI } from '@/constants'
 
 import App from './App.vue'
@@ -32,7 +33,7 @@ export async function boot(): Promise<void> {
     return
   }
 
-  if (!IS_TAURI) {
+  if (!IS_TAURI && serviceWorkerEnabled(import.meta.env.VITE_OPENPENCIL_SERVICE_WORKER)) {
     void import('virtual:pwa-register').then(({ registerSW }) => {
       registerSW({ immediate: true })
       return undefined
