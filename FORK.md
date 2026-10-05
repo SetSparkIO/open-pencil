@@ -50,7 +50,7 @@ Run this whenever upstream `master` has moved (`git rev-list --count origin/mast
 
 ## Upstream workflows in this fork
 
-Fast-forwarding `master` is a push, so it runs the push workflows in upstream's own copy of each file. A change on `dev` does not affect them. What the sync can trigger (each of these can also be started by hand with `workflow_dispatch`):
+Fast-forwarding `master` is a push, so it runs the push workflows in upstream's own copy of each file. A change on `dev` does not affect them. What the sync can trigger (all but Deploy preview can also be started by hand with `workflow_dispatch`):
 
 | Workflow | Trigger | In this fork |
 | --- | --- | --- |
