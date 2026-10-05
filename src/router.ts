@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { COLLABORATION_AVAILABLE } from '@/app/collab/availability'
+
 import WorkspaceView from './views/WorkspaceView.vue'
 
 const router = createRouter({
@@ -8,7 +10,9 @@ const router = createRouter({
     { path: '/', component: WorkspaceView },
     { path: '/storage', redirect: '/' },
     { path: '/demo', component: WorkspaceView, meta: { demo: true } },
-    { path: '/share/:roomId', component: WorkspaceView }
+    COLLABORATION_AVAILABLE
+      ? { path: '/share/:roomId', component: WorkspaceView }
+      : { path: '/share/:roomId', redirect: '/' }
   ]
 })
 
