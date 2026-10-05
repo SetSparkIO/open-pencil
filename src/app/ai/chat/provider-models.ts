@@ -27,7 +27,7 @@ const OpenRouterModelSchema = v.looseObject({
 
 type OpenRouterModel = v.InferOutput<typeof OpenRouterModelSchema>
 
-// Entries are checked one by one in `fetchOpenRouterModels`, so one odd model keeps the rest.
+// Entries are checked one by one in `fetchOpenRouterModels`, so one odd model still keeps the rest.
 const OpenRouterModelsResponseJSON = v.pipe(
   v.string(),
   v.parseJson(),
