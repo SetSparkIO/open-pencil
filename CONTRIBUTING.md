@@ -6,6 +6,7 @@ Questions and ideas go to [GitHub Discussions](https://github.com/open-pencil/op
 
 - `CONTRIBUTING.md` (this file): setup, pull requests, validation, commits.
 - [`AGENTS.md`](./AGENTS.md): repository map, cross-cutting conventions, and a `Guide` column pointing to the `AGENTS.md` inside each package or app domain. Read the root file and every guide on the path to the folder you change; coding agents pick them up the same way.
+- [`FORK.md`](./FORK.md): SetSpark's fork only. Branches, upstream syncs and merge rules.
 - [`packages/docs/development/`](packages/docs/development/): public explanations such as [architecture](https://openpencil.dev/development/architecture), [testing](packages/docs/development/testing.md), and the [roadmap](packages/docs/development/roadmap.md).
 
 ## Setup
