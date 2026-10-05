@@ -17,12 +17,12 @@ This repository is SetSpark's fork of [open-pencil/open-pencil](https://github.c
 
 Run this whenever upstream `master` has moved (`git rev-list --count origin/master..upstream/master` is not 0). Use a token whose pushes and PRs trigger workflows (SetSpark's agent GitHub App, or a person). A PR opened with a workflow's `GITHUB_TOKEN` gets no CI. If that happens, close it and reopen it with one of those tokens. Pushing upstream commits that change `.github/workflows/` also needs the token's `workflows` permission.
 
-1. Fast-forward `master`. Never use `--force` and never push tags. A plain push is refused unless it is a fast-forward, and upstream's release workflows run on `v*` tags.
+1. Fast-forward `master`. Never use `--force` and never push tags: upstream's release workflows run on `v*` tags. A plain push is refused unless it is a fast-forward. `--no-follow-tags` keeps a `push.followTags` setting from sending annotated tags along with the branch.
 
    ```sh
    git remote add upstream https://github.com/open-pencil/open-pencil.git  # once
    git fetch upstream master && git fetch origin
-   git push origin upstream/master:refs/heads/master
+   git push --no-follow-tags origin upstream/master:refs/heads/master
    ```
 
 2. If `dev` lacks commits from `master` (`git rev-list --count origin/dev..origin/master` is not 0), open the sync PR, unless one is already open (`gh pr list --base dev --head master`). An open PR whose head is `master` picks up later fast-forwards by itself.
@@ -50,12 +50,12 @@ Run this whenever upstream `master` has moved (`git rev-list --count origin/mast
 
 ## Upstream workflows in this fork
 
-Fast-forwarding `master` is a push, so it runs the push workflows in upstream's own copy of each file. A change on `dev` does not affect them. What can run:
+Fast-forwarding `master` is a push, so it runs the push workflows in upstream's own copy of each file. A change on `dev` does not affect them. What the sync can trigger (each of these can also be started by hand with `workflow_dispatch`):
 
 | Workflow | Trigger | In this fork |
 | --- | --- | --- |
-| Deploy app, Build, Deploy docs | `v*` tags | Never triggered: syncs do not push tags. |
-| Build native contracts CI image | push to `master` that changes the paths in its `paths` filter (its own file, and a Dockerfile path that no longer exists upstream) | Enabled. A sync that changes either path makes one run. It fails at the push to `ghcr.io/open-pencil`, which this fork cannot write, and publishes nothing. Disabling it (Actions, then the workflow, then Disable workflow) needs an admin. The state is a repository setting, so syncs would keep it. |
+| Deploy app, Build, Deploy docs | `v*` tags | Not triggered by the sync, which pushes no tags. |
+| Build native contracts CI image | push to `master` that changes the paths in its `paths` filter (its own file, and a Dockerfile path that no longer exists upstream) | Enabled. A sync that changes either path makes one run. It fails and publishes nothing: at 1c66fed8 its build context directory does not exist, and if upstream fixes that, the push to `ghcr.io/open-pencil` is refused because this fork cannot write there. Disabling it (Actions, then the workflow, then Disable workflow) needs an admin. The state is a repository setting, so syncs would keep it. |
 | Heavy tests | schedule | Schedules run from `dev`. No run in this fork so far. |
 | Deploy preview | after Preview | Its job is limited to upstream on `dev` (#7). |
 
