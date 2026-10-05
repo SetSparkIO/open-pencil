@@ -114,7 +114,10 @@ export function writeFigArchive(input: WriteFigArchiveInput): Uint8Array {
     'meta.json': new TextEncoder().encode(input.metaJSON)
   }
   for (const image of input.images ?? []) entries[image.name] = [image.data, { level: 0 }]
-  return zipSync(entries)
+  // Every entry carries the earliest ZIP time instead of the current one, so an unchanged
+  // document saves to the same bytes. fflate reads the date in local time, so this is
+  // 1980-01-01 00:00 in every time zone.
+  return zipSync(entries, { mtime: new Date(1980, 0, 1) })
 }
 
 /** Compatibility signature used by core while archive assembly migrates to this package. */

@@ -486,11 +486,8 @@ export async function exportFigFile(
     renderHeadlessThumbnail
   )
 
-  const metaJSON = JSON.stringify({
-    version: 1,
-    app: 'OpenPencil',
-    createdAt: new Date().toISOString()
-  })
+  // No timestamp: an unchanged document saves to the same bytes.
+  const metaJSON = JSON.stringify({ version: 1, app: 'OpenPencil' })
 
   const imageEntries = collectImageEntries(graph)
 

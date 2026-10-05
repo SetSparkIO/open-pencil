@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it, setSystemTime } from 'bun:test'
 
 import {
   FIG_PACKAGE_STATUS,
@@ -74,6 +74,61 @@ describe('@open-pencil/fig package API', () => {
     expect(parsed.images).toEqual([['hash', new Uint8Array([9, 8, 7])]])
     expect(parsed.thumbnailPNG).toEqual(thumbnailPNG)
     expect(parsed.metaJSON).toBe(metaJSON)
+  })
+
+  it('writes the same archive bytes at any time, with every entry dated 1980-01-01', () => {
+    const input = {
+      schemaDeflated: deflateSync(getSchemaBytes()),
+      kiwiData: encodeMessage(
+        createNodeChangesMessage(0, 0, [
+          {
+            guid: { sessionID: 0, localID: 0 },
+            type: 'DOCUMENT',
+            phase: 'CREATED',
+            name: 'Document'
+          }
+        ])
+      ),
+      thumbnailPNG: new Uint8Array([...PNG_SIGNATURE, 1, 2, 3]),
+      metaJSON: '{"version":1}',
+      images: [{ name: 'images/hash', data: new Uint8Array([9, 8, 7]) }]
+    }
+    try {
+      setSystemTime(new Date('2026-01-02T03:04:05Z'))
+      const first = writeFigArchive(input)
+      setSystemTime(new Date('2027-06-07T22:09:10Z'))
+      const second = writeFigArchive(input)
+
+      expect(second).toEqual(first)
+      // Walk the central directory from the end record (no archive comment, so the last 22
+      // bytes) and check the DOS time and date of every entry there and in its local header.
+      const view = new DataView(first.buffer, first.byteOffset, first.byteLength)
+      const end = first.byteLength - 22
+      expect(view.getUint32(end, true)).toBe(0x06054b50)
+      const entries = view.getUint16(end + 10, true)
+      expect(entries).toBe(4)
+      let at = view.getUint32(end + 16, true)
+      for (let i = 0; i < entries; i++) {
+        expect(view.getUint32(at, true)).toBe(0x02014b50)
+        expect([view.getUint16(at + 12, true), view.getUint16(at + 14, true)]).toEqual([
+          0,
+          (1 << 5) | 1
+        ])
+        const local = view.getUint32(at + 42, true)
+        expect(view.getUint32(local, true)).toBe(0x04034b50)
+        expect([view.getUint16(local + 10, true), view.getUint16(local + 12, true)]).toEqual([
+          0,
+          (1 << 5) | 1
+        ])
+        at +=
+          46 +
+          view.getUint16(at + 28, true) +
+          view.getUint16(at + 30, true) +
+          view.getUint16(at + 32, true)
+      }
+    } finally {
+      setSystemTime()
+    }
   })
 
   it('parses legacy raw fig-kiwi files and preserves their thumbnail chunk', () => {
