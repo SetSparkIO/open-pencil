@@ -25,19 +25,26 @@ Run this whenever upstream `master` has moved (`git rev-list --count origin/mast
    git push --no-follow-tags origin upstream/master:refs/heads/master
    ```
 
-2. If `dev` lacks commits from `master` (`git rev-list --count origin/dev..origin/master` is not 0), make the sync merge locally and open a PR into `dev` from a branch. Do not open a PR with `master` as its head. GitHub's merge ignores the `union` merge driver that `.gitattributes` sets for `CHANGELOG.md`, so it reports conflicts there that a local merge resolves. First check that no `sync/upstream-*` PR is already open (`gh pr list --repo SetSparkIO/open-pencil --base dev`). If one is, merge the new `master` into that branch the same way.
+2. If `dev` lacks commits from `master` (`git rev-list --count origin/dev..origin/master` is not 0), make the sync merge locally and open a PR into `dev` from a branch. Do not open a PR with `master` as its head. GitHub's merge ignores the `union` merge driver that `.gitattributes` sets for `CHANGELOG.md`, so it reports conflicts there that a local merge resolves. First check that no `sync/upstream-*` PR is already open (`gh pr list --repo SetSparkIO/open-pencil --base dev`). If one is, switch to that branch instead of creating one, merge `origin/dev` and then `origin/master` into it locally, and continue from the checks below.
 
    ```sh
    git switch -c sync/upstream-YYYYMMDD origin/dev
    git merge --no-ff origin/master -m 'chore: merge upstream master into dev'
-   # resolve any conflict, then read the CHANGELOG.md diff: the union driver keeps
-   # the lines from both sides, so remove any line it duplicated
+   # On a conflict the merge stops unfinished. Fix the files, then:
+   #   git add <files> && git merge --continue
+   # Read the CHANGELOG.md diff: the union driver keeps the lines from both sides.
+   # If it duplicated any, remove them and fold the fix into the merge commit:
+   #   git add CHANGELOG.md && git commit --amend --no-edit
+   git rev-parse -q --verify MERGE_HEAD && echo 'merge not finished'  # must print nothing
+   git status --short                                                 # must print nothing
+   git merge-base --is-ancestor origin/master HEAD && git merge-base --is-ancestor origin/dev HEAD \
+     && echo 'contains master and dev'                                # must print this
    git push --no-follow-tags origin sync/upstream-YYYYMMDD
    gh pr create --repo SetSparkIO/open-pencil --base dev --head sync/upstream-YYYYMMDD \
      --title 'chore: merge upstream master into dev'
    ```
 
-   The branch already contains `dev`, so GitHub's merge of the PR has nothing left to resolve.
+   The branch contains `dev` as it was when you merged, so GitHub's merge of the PR has nothing left to resolve while `dev` stays there. If `dev` moves before the PR merges, merge the new `origin/dev` into the branch locally the same way, run the checks again, push, and ask for review again.
 
 3. The PR needs CI green and review-agent's approval.
 4. Merge it with a merge commit. Never squash or rebase a sync PR. Squashing drops upstream's ancestry, so every later sync conflicts again on the lines both sides changed.
