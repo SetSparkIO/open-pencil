@@ -25,23 +25,22 @@ Run this whenever upstream `master` has moved (`git rev-list --count origin/mast
    git push --no-follow-tags origin upstream/master:refs/heads/master
    ```
 
-2. If `dev` lacks commits from `master` (`git rev-list --count origin/dev..origin/master` is not 0), open the sync PR, unless one is already open (`gh pr list --base dev --head master`). An open PR whose head is `master` picks up later fast-forwards by itself.
-
-   ```sh
-   gh pr create --repo SetSparkIO/open-pencil --base dev --head master \
-     --title 'chore: merge upstream master into dev'
-   ```
-
-3. If the PR shows conflicts, resolve them on a branch instead, because nothing may be committed to `master`. Close the `master` PR and open this branch's PR into `dev`:
+2. If `dev` lacks commits from `master` (`git rev-list --count origin/dev..origin/master` is not 0), make the sync merge locally and open a PR into `dev` from a branch. Do not open a PR with `master` as its head. GitHub's merge ignores the `union` merge driver that `.gitattributes` sets for `CHANGELOG.md`, so it reports conflicts there that a local merge resolves. First check that no `sync/upstream-*` PR is already open (`gh pr list --repo SetSparkIO/open-pencil --base dev`). If one is, merge the new `master` into that branch the same way.
 
    ```sh
    git switch -c sync/upstream-YYYYMMDD origin/dev
    git merge --no-ff origin/master -m 'chore: merge upstream master into dev'
-   # resolve, commit, push, then open the PR into dev
+   # resolve any conflict, then read the CHANGELOG.md diff: the union driver keeps
+   # the lines from both sides, so remove any line it duplicated
+   git push --no-follow-tags origin sync/upstream-YYYYMMDD
+   gh pr create --repo SetSparkIO/open-pencil --base dev --head sync/upstream-YYYYMMDD \
+     --title 'chore: merge upstream master into dev'
    ```
 
-4. The PR needs CI green and review-agent's approval.
-5. Merge it with a merge commit. Never squash or rebase a sync PR. Squashing drops upstream's ancestry, so every later sync conflicts again on the lines both sides changed.
+   The branch already contains `dev`, so GitHub's merge of the PR has nothing left to resolve.
+
+3. The PR needs CI green and review-agent's approval.
+4. Merge it with a merge commit. Never squash or rebase a sync PR. Squashing drops upstream's ancestry, so every later sync conflicts again on the lines both sides changed.
 
    ```sh
    gh pr merge <n> --repo SetSparkIO/open-pencil --merge \
@@ -55,7 +54,7 @@ Fast-forwarding `master` is a push, so it runs the push workflows in upstream's 
 | Workflow | Trigger | In this fork |
 | --- | --- | --- |
 | Deploy app, Build, Deploy docs | `v*` tags | Not triggered by the sync, which pushes no tags. |
-| Build native contracts CI image | push to `master` that changes the paths in its `paths` filter (its own file, and a Dockerfile path that no longer exists upstream) | Enabled. A sync that changes either path makes one run. It fails and publishes nothing: at 1c66fed8 its build context directory does not exist, and if upstream fixes that, the push to `ghcr.io/open-pencil` is refused because this fork cannot write there. Disabling it (Actions, then the workflow, then Disable workflow) needs an admin. The state is a repository setting, so syncs would keep it. |
+| Build native contracts CI image | push to `master` that changes the paths in its `paths` filter (its own file, and a Dockerfile path that no longer exists upstream) | Disabled in this fork (`disabled_manually`, by an admin on 2026-10-05), and it must stay disabled. A run here would fail and publish nothing: at 1c66fed8 its build context directory does not exist, and if upstream fixes that, the push to `ghcr.io/open-pencil` is refused because this fork cannot write there. The state is a repository setting, so syncs keep it. Re-enabling it needs an admin. |
 | Heavy tests | schedule | Schedules run from `dev`. No run in this fork so far. |
 | Deploy preview | after Preview | Its job is limited to upstream on `dev` (#7). |
 
