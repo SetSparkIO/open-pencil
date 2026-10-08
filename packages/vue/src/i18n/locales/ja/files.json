@@ -25,5 +25,6 @@
   "newDesign": "新しいデザイン",
   "noMatchingFiles": "「{query}」に一致するファイルはありません。",
   "saveAsPrompt": "名前を付けて保存：",
-  "browserFileAPINotSupported": "このブラウザはローカルファイルAPIに対応していません。ファイルは同じ場所に保存されず、ダウンロードされます。"
+  "browserFileAPINotSupported": "このブラウザはローカルファイルAPIに対応していません。ファイルは同じ場所に保存されず、ダウンロードされます。",
+  "browserFileAPIDisabledInBrave": "BraveではローカルファイルAPIが既定で無効のため、ファイルは同じ場所に保存されずダウンロードされます。同じ場所に保存するには brave://flags/#file-system-access-api を有効にしてBraveを再起動してください。"
 }

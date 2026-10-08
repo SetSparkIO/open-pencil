@@ -9,6 +9,15 @@ export function supportsFileSystemAccess(): boolean {
 }
 
 /**
+ * Brave is Chromium but ships File System Access off by default; `brave://flags/#file-system-access-api`
+ * turns it on. Brave exposes `navigator.brave` in every mode, so the banner can name the flag instead
+ * of calling the browser unsupported.
+ */
+export function isBraveBrowser(): boolean {
+  return IS_BROWSER && 'brave' in navigator
+}
+
+/**
  * Opens the browser save picker. Resolves to null when the browser has no picker, and rejects
  * with `AbortError` when the user cancels so callers can keep cancel and failure distinct.
  */
