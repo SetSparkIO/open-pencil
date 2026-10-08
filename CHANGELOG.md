@@ -62,6 +62,7 @@
 
 ### Changed
 
+- In Brave, the browser banner says the local file API is off by default and names the `brave://flags/#file-system-access-api` flag that turns it on, instead of calling the browser unsupported.
 - Save an unchanged `.fig` file to the same bytes every time: `meta.json` no longer records the save time, and every archive entry carries the fixed date 1980-01-01, so a document kept in Git shows no change until its content does.
 - Name the tool and list every invalid argument with where it is when AI chat, the CLI, or WebMCP calls a tool wrongly, as MCP clients already saw, as in `Invalid arguments for create_shape:` followed by `× Invalid type: Expected ("FRAME" | …) but received "CIRCLE"` and `→ at type`. Design JSX component properties and gradient stops report their problems the same way. Previously only the first problem was named, without the tool or the argument.
 - HTML and Tailwind JSX export write variable-bound colors, spacing, radii, borders, sizes, type sizes, and opacity as the tokens they come from, such as `var(--color-primary)` or `bg-primary`, and put layers set to another mode in it with an attribute such as `data-theme="dark"`. Values CSS would not resolve as the canvas draws them stay literal, and standalone HTML includes the stylesheet for the tokens it uses.

@@ -36,7 +36,9 @@ export const filesMessageDefaults = {
   noMatchingFiles: params('No files match “{query}”.'),
   saveAsPrompt: 'Save as:',
   browserFileAPINotSupported:
-    "Your browser doesn't support the local file API. Files will be downloaded instead of saved in place."
+    "Your browser doesn't support the local file API. Files will be downloaded instead of saved in place.",
+  browserFileAPIDisabledInBrave:
+    'Brave turns the local file API off by default, so files will be downloaded instead of saved in place. To save in place, enable brave://flags/#file-system-access-api and restart Brave.'
 } as const
 
 export const filesMessages = i18n('files', filesMessageDefaults)

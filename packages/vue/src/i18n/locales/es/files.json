@@ -25,5 +25,6 @@
   "newDesign": "Nuevo diseño",
   "noMatchingFiles": "Ningún archivo coincide con «{query}».",
   "saveAsPrompt": "Guardar como:",
-  "browserFileAPINotSupported": "Tu navegador no admite la API de archivos locales. Los archivos se descargarán en lugar de guardarse en el mismo lugar."
+  "browserFileAPINotSupported": "Tu navegador no admite la API de archivos locales. Los archivos se descargarán en lugar de guardarse en el mismo lugar.",
+  "browserFileAPIDisabledInBrave": "Brave desactiva la API de archivos locales de forma predeterminada, por lo que los archivos se descargarán en lugar de guardarse en su sitio. Para guardar en su sitio, activa brave://flags/#file-system-access-api y reinicia Brave."
 }

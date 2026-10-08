@@ -87,6 +87,7 @@ ja:diagnostics.preparationDomImport
 ja:diagnostics.usageDescription
 ja:diagnostics.usageHistoryDescription
 ja:editor.showUI
+ja:files.browserFileAPIDisabledInBrave
 ja:files.browserFileAPINotSupported
 ja:files.clipboardImageFetchFailed
 ja:files.clipboardImagesFetchFailed
@@ -230,6 +231,7 @@ zh-cn:diagnostics.mcpFailed
 zh-cn:diagnostics.preparationDomImport
 zh-cn:diagnostics.usageDescription
 zh-cn:diagnostics.usageHistoryDescription
+zh-cn:files.browserFileAPIDisabledInBrave
 zh-cn:files.browserFileAPINotSupported
 zh-cn:files.clipboardImageFetchFailed
 zh-cn:files.clipboardImagesFetchFailed
