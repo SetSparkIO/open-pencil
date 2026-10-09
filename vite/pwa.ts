@@ -1,13 +1,27 @@
-import { VitePWA } from 'vite-plugin-pwa'
+import { join } from 'node:path'
+
+import { VitePWA, type VitePWAOptions } from 'vite-plugin-pwa'
 
 /**
- * With `serviceWorker` false (`VITE_OPENPENCIL_SERVICE_WORKER=off`) the build emits a
- * self-destroying `/sw.js` in place of the Workbox worker, and `boot.ts` registers nothing.
+ * Builds `retiring-worker/sw.js` to `/sw.js` as it is, with no precache manifest. It replaces
+ * the plugin's own `selfDestroying` worker, whose activate handler starts the unregister and
+ * cache deletion without `event.waitUntil`, so the browser may stop it before they finish.
+ */
+const retiringWorker: Partial<VitePWAOptions> = {
+  strategies: 'injectManifest',
+  srcDir: join(import.meta.dirname, 'retiring-worker'),
+  filename: 'sw.js',
+  injectManifest: { injectionPoint: undefined, rollupFormat: 'iife' }
+}
+
+/**
+ * With `serviceWorker` false (`VITE_OPENPENCIL_SERVICE_WORKER=off`) the build emits the
+ * retiring worker as `/sw.js` in place of the Workbox worker, and `boot.ts` registers nothing.
  */
 export function openPencilPwaPlugin({ serviceWorker = true }: { serviceWorker?: boolean } = {}) {
   return VitePWA({
     registerType: 'autoUpdate',
-    selfDestroying: !serviceWorker,
+    ...(serviceWorker ? {} : retiringWorker),
     devOptions: { enabled: false },
     workbox: {
       maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
