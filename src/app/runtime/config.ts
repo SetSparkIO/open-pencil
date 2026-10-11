@@ -2,7 +2,7 @@ import { appPreferences, type CanvasRenderingMode } from '@/app/settings/prefere
 import { IS_BROWSER } from '@/constants'
 
 export type SceneRendererMode = CanvasRenderingMode
-export type CollaborationTransportMode = 'default' | 'test'
+export type CollaborationTransportMode = 'default' | 'test' | 'relay'
 
 export interface AppRuntimeConfig {
   test: boolean
@@ -22,6 +22,7 @@ export function parseAppRuntimeConfig(
 ): AppRuntimeConfig {
   const params = new URLSearchParams(search)
   const renderer = params.get('renderer')
+  const transport = params.get('collabTransport')
   const sceneRenderer =
     renderer === 'tiled' || renderer === 'retained' ? renderer : preferredRenderer
   return {
@@ -32,7 +33,7 @@ export function parseAppRuntimeConfig(
     showRulers: !params.has('no-rulers'),
     sceneRenderer,
     sceneRendererOverride: renderer === 'tiled' || renderer === 'retained',
-    collaborationTransport: params.get('collabTransport') === 'test' ? 'test' : 'default',
+    collaborationTransport: transport === 'test' || transport === 'relay' ? transport : 'default',
     collaborationRelayURL: params.get('collabRelay')
   }
 }

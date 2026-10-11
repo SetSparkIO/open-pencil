@@ -529,6 +529,15 @@
         "valibot": "^1.5.0",
       },
     },
+    "tools/dev/collab-relay": {
+      "name": "@open-pencil/collab-relay-tools",
+      "dependencies": {
+        "es-toolkit": "^1.52.0",
+      },
+      "devDependencies": {
+        "js-base64": "^3.9.3",
+      },
+    },
     "tools/dev/dev-server": {
       "name": "@open-pencil/dev-server-tools",
     },
@@ -1483,6 +1492,8 @@
     "@open-pencil/ci-policy-tools": ["@open-pencil/ci-policy-tools@workspace:tools/ci/policy"],
 
     "@open-pencil/cli": ["@open-pencil/cli@workspace:packages/cli"],
+
+    "@open-pencil/collab-relay-tools": ["@open-pencil/collab-relay-tools@workspace:tools/dev/collab-relay"],
 
     "@open-pencil/core": ["@open-pencil/core@workspace:packages/core"],
 
