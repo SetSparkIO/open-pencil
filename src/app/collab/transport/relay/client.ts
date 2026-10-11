@@ -174,17 +174,26 @@ export function joinRelayCollabRoom(
     const ws = createSocket(url)
     ws.binaryType = 'arraybuffer'
     socket = ws
+    let accepted = false
     ws.addEventListener('open', () => {
       if (socket !== ws) return
-      attempt = 0
-      outageReported = false
       lastFrameAt = Date.now()
       send({ kind: 'hello', senderId: selfId, targetId: null, roomId })
+      // The relay answers this ping only once it has taken the hello, so the pong (or any
+      // other frame) is the sign that this socket is in the room, even a room with no one else.
+      send({ kind: 'ping', senderId: selfId, targetId: null })
       ping.resume()
     })
     ws.addEventListener('message', (event: MessageEvent) => {
       if (socket !== ws) return
       lastFrameAt = Date.now()
+      // An open socket the relay then turns away (a full room) keeps the backoff and the
+      // outage it is part of; only a socket the relay took ends them.
+      if (!accepted) {
+        accepted = true
+        attempt = 0
+        outageReported = false
+      }
       const bytes = frameBytes(event.data)
       const frame = bytes && decodeFrame(bytes)
       if (frame) receive(frame)

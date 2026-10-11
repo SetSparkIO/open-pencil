@@ -4,7 +4,7 @@ import { request } from 'node:http'
 
 import { fromUint8Array } from 'js-base64'
 
-import { joinRelayCollabRoom } from '@/app/collab/transport/relay/client'
+import { joinRelayCollabRoom, type RelayClientOptions } from '@/app/collab/transport/relay/client'
 import { decodeFrame, encodeFrame, type RelayFrame } from '@/app/collab/transport/relay/frame'
 import type { CollabRoomTransport } from '@/app/collab/transport/types'
 
@@ -237,7 +237,7 @@ interface Client {
   send(namespace: string, data: Uint8Array, target?: string): void
 }
 
-function client(url: URL, options: { pingIntervalMs?: number; idleTimeoutMs?: number } = {}) {
+function client(url: URL, options: Partial<RelayClientOptions> = {}) {
   const transport = joinRelayCollabRoom(ROOM, {
     url: url.href,
     reconnectBaseMs: 20,
@@ -325,4 +325,45 @@ test('pings keep a quiet room open past the idle timeout', async () => {
   expect(alice.peers.size).toBe(1)
   expect(bob.peers.size).toBe(1)
   expect(errors).toEqual([])
+})
+
+test('a client turned away by a full room backs off, reports once, and later gets in alone', async () => {
+  const { url, stop } = relay({ maxPeersPerRoom: 1 })
+  const alice = await rawPeer(url)
+  alice.send(hello(ALICE))
+  alice.send({ kind: 'ping', senderId: ALICE, targetId: null })
+  await until(() => alice.frames.some((frame) => frame.kind === 'pong'), 'alice to join')
+  const errors: unknown[] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => errors.push(args)
+  cleanup.push(() => {
+    console.error = originalError
+  })
+
+  let refusals = 0
+  let framesReceived = 0
+  client(url, {
+    reconnectBaseMs: 20,
+    reconnectMaxMs: 1_000,
+    createSocket(target) {
+      const socket = new WebSocket(target)
+      socket.addEventListener('close', (event) => {
+        if (event.code === 4429) refusals++
+      })
+      socket.addEventListener('message', () => framesReceived++)
+      return socket
+    }
+  })
+  // Doubling from 20 ms leaves room for about six tries in 400 ms, against dozens without it.
+  await Bun.sleep(400)
+  expect(refusals).toBeGreaterThanOrEqual(2)
+  expect(refusals).toBeLessThanOrEqual(7)
+  expect(framesReceived).toBe(0)
+  expect(errors.length).toBe(1)
+
+  // Bob is alone once Alice goes, so the pong to his first ping is what he receives.
+  alice.socket.close()
+  await until(() => framesReceived > 0, 'bob to join the empty room')
+  stop()
+  await until(() => errors.length === 2, 'a fresh report for the next outage')
 })

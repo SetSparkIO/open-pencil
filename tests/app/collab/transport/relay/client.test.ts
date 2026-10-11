@@ -14,6 +14,8 @@ import { asDouble } from '#tests/helpers/doubles'
 const ROOM = 'client-test-room-01'
 const BOB = '0b'.repeat(16)
 const CAROL = '0c'.repeat(16)
+/** Sent by the relay for a full room; the client keeps redialling. */
+const CLOSE_FULL = 4429
 
 type Listener = (event: { data?: unknown; code?: number }) => void
 
@@ -63,7 +65,14 @@ afterEach(async () => {
   for (const transport of transports.splice(0)) await transport.leave()
 })
 
-function join(options: { idleTimeoutMs?: number; pingIntervalMs?: number } = {}) {
+function join(
+  options: {
+    idleTimeoutMs?: number
+    pingIntervalMs?: number
+    reconnectBaseMs?: number
+    reconnectMaxMs?: number
+  } = {}
+) {
   const sockets: FakeSocket[] = []
   const transport = joinRelayCollabRoom(ROOM, {
     url: 'wss://relay.example/collab',
@@ -84,10 +93,24 @@ function join(options: { idleTimeoutMs?: number; pingIntervalMs?: number } = {})
   return { transport, sockets, joined, left }
 }
 
+const realSetTimeout = setTimeout
 const nextTask = () =>
   new Promise((resolve) => {
-    setTimeout(resolve, 0)
+    realSetTimeout(resolve, 0)
   })
+
+/** Runs each redial on the next task and keeps the delay the client asked for. */
+function recordRedials() {
+  const delays: number[] = []
+  const timer = spyOn(globalThis, 'setTimeout').mockImplementation(((
+    run: () => void,
+    ms?: number
+  ) => {
+    delays.push(ms ?? 0)
+    return realSetTimeout(run, 0)
+  }) as typeof setTimeout)
+  return { delays, restore: () => timer.mockRestore() }
+}
 
 test('the relay setting is a trimmed URL or path, dialled as ws or wss', () => {
   expect(configuredRelay(undefined)).toBeNull()
@@ -105,13 +128,14 @@ test('the relay setting is a trimmed URL or path, dialled as ws or wss', () => {
 test('joining says hello, and a hello is answered with a welcome to that peer', () => {
   const { sockets, joined } = join()
   sockets[0].open()
-  const [hello] = sockets[0].sent
+  const [hello, ping] = sockets[0].sent
   expect(hello).toMatchObject({ kind: 'hello', targetId: null, roomId: ROOM })
   const self = hello.senderId
+  expect(ping).toEqual({ kind: 'ping', senderId: self, targetId: null })
 
   sockets[0].receive({ kind: 'hello', senderId: BOB, targetId: null, roomId: ROOM })
   expect(joined).toEqual([BOB])
-  expect(sockets[0].sent[1]).toEqual({ kind: 'welcome', senderId: self, targetId: BOB })
+  expect(sockets[0].sent[2]).toEqual({ kind: 'welcome', senderId: self, targetId: BOB })
 
   // A peer that says hello again has reconnected and is announced again for a fresh sync.
   sockets[0].receive({ kind: 'hello', senderId: BOB, targetId: null, roomId: ROOM })
@@ -179,6 +203,43 @@ test('a lost socket drops every peer and redials under the same id', async () =>
   }
 })
 
+test('a full room keeps its backoff and one report until the relay takes the hello', async () => {
+  const error = spyOn(console, 'error').mockImplementation(() => undefined)
+  const redials = recordRedials()
+  try {
+    const { sockets } = join({ reconnectBaseMs: 100, reconnectMaxMs: 1_000 })
+    // Each socket opens and is then turned away, as the relay does when the room is full.
+    for (let i = 0; i < 6; i++) {
+      sockets[i].open()
+      sockets[i].serverClose(CLOSE_FULL)
+      await nextTask()
+    }
+    expect(sockets).toHaveLength(7)
+    expect(error).toHaveBeenCalledTimes(1)
+    const ceilings = [100, 200, 400, 800, 1_000, 1_000]
+    expect(redials.delays).toHaveLength(ceilings.length)
+    redials.delays.forEach((ms, i) => {
+      expect(ms).toBeGreaterThanOrEqual(ceilings[i] / 2)
+      expect(ms).toBeLessThanOrEqual(ceilings[i])
+    })
+
+    // Alone in the room, the pong to the first ping is the only sign the hello was taken.
+    sockets[6].open()
+    const self = sockets[6].sent[0].senderId
+    sockets[6].receive({ kind: 'pong', senderId: self, targetId: null })
+    sockets[6].serverClose(1006)
+    await nextTask()
+    expect(error).toHaveBeenCalledTimes(2)
+    const reset = redials.delays.at(-1) ?? -1
+    expect(reset).toBeGreaterThanOrEqual(50)
+    expect(reset).toBeLessThanOrEqual(100)
+    expect(sockets).toHaveLength(8)
+  } finally {
+    redials.restore()
+    error.mockRestore()
+  }
+})
+
 test('a refused room is not retried', async () => {
   const error = spyOn(console, 'error').mockImplementation(() => undefined)
   try {
@@ -207,7 +268,7 @@ test('sends while disconnected are dropped', () => {
   const { transport, sockets } = join()
   transport.makeAction('doc')[0](new Uint8Array([1]))
   sockets[0].open()
-  expect(sockets[0].sent.map((frame) => frame.kind)).toEqual(['hello'])
+  expect(sockets[0].sent.map((frame) => frame.kind)).toEqual(['hello', 'ping'])
 })
 
 test('leaving before the socket opens closes it without a word', async () => {
