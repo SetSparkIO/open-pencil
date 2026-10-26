@@ -19,10 +19,10 @@ async function main() {
   fontManager.attachProvider(ck, fontProvider)
 
   // Load Inter font from public dir
-  const fontPath = join(process.cwd(), 'public/Inter-SemiBold.ttf')
+  const fontPath = join(process.cwd(), 'packages/core/assets/Inter-SemiBold.ttf')
   console.warn('Loading font from:', fontPath)
   const fontData = await readFile(fontPath)
-  fontManager.markLoaded(
+  await fontManager.markLoaded(
     'Inter',
     'SemiBold',
     fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength)

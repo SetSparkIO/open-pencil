@@ -1,9 +1,14 @@
 import { limitAsync } from 'es-toolkit/promise'
 
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { instanceMainComponent } from '@open-pencil/scene-graph/instances'
 import type { Color } from '@open-pencil/scene-graph/primitives'
 
-import { getPageColor, setPageBackgrounds } from '#core/figma-api/page-backgrounds'
+import {
+  getPageColor,
+  setDefaultPageBackground,
+  setPageBackgrounds
+} from '#core/figma-api/page-backgrounds'
 import {
   canUseFigPopulationWorker,
   createFigPopulationWorker
@@ -15,10 +20,16 @@ import { collectGraphFontRequirements } from '#core/text/requirements'
 import { missingGraphFontScripts } from '#core/text/resolved-requirements'
 
 import { createPageViewportStore } from './page-viewports'
+import { createPageLayouts } from './pages/layouts'
 import type { EditorContext } from './types'
 
 export interface PageSwitchProgress {
-  phase: 'populating-page' | 'resolving-fonts' | 'resolving-fallbacks' | 'layout'
+  phase:
+    | 'populating-page'
+    | 'resolving-fonts'
+    | 'resolving-fallbacks'
+    | 'layout'
+    | 'drawing-shaders'
   detail?: string
   completed?: number
   total?: number
@@ -41,8 +52,40 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 const MAX_CONCURRENT_FONT_LOADS = 4
-export function createPageActions(ctx: EditorContext) {
+/** What preparing a page needs drawn once it is laid out, such as its shaders' frames. */
+interface PageDrawing {
+  drawPageShaderFrames(
+    pageId: string,
+    options: { signal?: AbortSignal; onProgress?: (progress: PageSwitchProgress) => void }
+  ): Promise<void>
+}
+
+/**
+ * The other pages that hold the component sets instances on `pageId` show a variant of,
+ * nested instances included. A set on Figma's internal canvas is a copy of a library's, kept
+ * with only what the file uses, so its page is left out.
+ */
+export function componentSetPages(graph: SceneGraph, pageId: string): string[] {
+  const pages = new Set<string>()
+  const visit = (id: string): void => {
+    for (const node of graph.getChildren(id)) {
+      if (node.type === 'INSTANCE') {
+        const component = instanceMainComponent(graph, node)
+        const set = component?.parentId ? graph.getNode(component.parentId) : undefined
+        const setPageId = set?.type === 'COMPONENT_SET' ? graph.pageOf(set.id) : null
+        const setPage = setPageId ? graph.getNode(setPageId) : undefined
+        if (setPage && setPage.id !== pageId && !setPage.internalOnly) pages.add(setPage.id)
+      }
+      visit(node.id)
+    }
+  }
+  visit(pageId)
+  return [...pages]
+}
+
+export function createPageActions(ctx: EditorContext, drawing?: PageDrawing) {
   const pageViewportStore = createPageViewportStore(ctx)
+  const pageLayouts = createPageLayouts(ctx)
   function syncPageColor() {
     ctx.state.pageColor = getPageColor(ctx.graph.getNode(ctx.state.currentPageId))
   }
@@ -166,14 +209,33 @@ export function createPageActions(ctx: EditorContext) {
     options.onProgress?.({ phase: 'populating-page', detail: page.name })
     const populated = await populatePage(pageId, generation, options.signal)
     if (populated === null || generation !== pageSwitchGeneration) return null
+    // A file brings in only the variants a page uses; switching a variant, in the panel or in
+    // preview, needs the rest of its set, laid out with its fonts, so the pages holding those
+    // sets are prepared with this one, and the pages of sets their variants use in turn.
+    const seen = new Set([pageId])
+    const pending = componentSetPages(ctx.graph, pageId)
+    for (let setPageId = pending.shift(); setPageId !== undefined; setPageId = pending.shift()) {
+      if (seen.has(setPageId)) continue
+      seen.add(setPageId)
+      const ready = await preparePageNodes(setPageId)
+      throwIfAborted(options.signal)
+      if (!ready || generation !== pageSwitchGeneration) return null
+      pending.push(...componentSetPages(ctx.graph, setPageId))
+    }
 
     await resolvePageFonts(pageId, page.name, options)
     throwIfAborted(options.signal)
     if (generation !== pageSwitchGeneration) return null
-    if (ctx.getRenderer() || populated) {
+    // A page visited before keeps the layout it got then, unless something it depends on changed.
+    if ((ctx.getRenderer() || populated) && !pageLayouts.isCurrent(pageId)) {
       options.onProgress?.({ phase: 'layout', detail: page.name })
-      computeAllLayouts(ctx.graph, pageId)
+      ctx.graph.applyDerivedLayoutDuring(() => computeAllLayouts(ctx.graph, pageId))
+      pageLayouts.record(pageId)
     }
+    throwIfAborted(options.signal)
+    if (generation !== pageSwitchGeneration) return null
+    // Frames are drawn at the size layout gives each layer.
+    await drawing?.drawPageShaderFrames(pageId, options)
     throwIfAborted(options.signal)
     return generation === pageSwitchGeneration ? { pageId, generation } : null
   }
@@ -209,7 +271,7 @@ export function createPageActions(ctx: EditorContext) {
     if (populated === null || graph !== ctx.graph) return false
     await resolvePageFonts(page.id, page.name, {})
     if (graph !== ctx.graph) return false
-    computeAllLayouts(graph, page.id)
+    graph.applyDerivedLayoutDuring(() => computeAllLayouts(graph, page.id))
     return true
   }
 
@@ -251,6 +313,15 @@ export function createPageActions(ctx: EditorContext) {
     if (prepared) commitPageSwitch(prepared)
   }
 
+  /** Opens the page before or after the current one in the pages panel, stopping at the ends. */
+  async function switchToAdjacentPage(step: 1 | -1): Promise<void> {
+    const pages = ctx.graph.getPages()
+    const index = pages.findIndex((page) => page.id === ctx.state.currentPageId)
+    const next = index + step
+    if (index === -1 || next < 0 || next >= pages.length) return
+    await switchPage(pages[next].id)
+  }
+
   function clearPageViewports() {
     populationWorkerGeneration++
     pageSwitchGeneration++
@@ -263,6 +334,7 @@ export function createPageActions(ctx: EditorContext) {
     const pages = ctx.graph.getPages()
     const pageName = name ?? `Page ${pages.length + 1}`
     const page = ctx.graph.addPage(pageName)
+    setDefaultPageBackground(ctx.graph, page, ctx.state.theme)
     void switchPage(page.id)
     return page.id
   }
@@ -317,6 +389,8 @@ export function createPageActions(ctx: EditorContext) {
     preparePage,
     commitPageSwitch,
     switchPage,
+    switchToNextPage: () => switchToAdjacentPage(1),
+    switchToPreviousPage: () => switchToAdjacentPage(-1),
     addPage,
     deletePage,
     movePage,

@@ -2,8 +2,9 @@
 import { useAttrs } from 'vue'
 
 import type { Color } from '@open-pencil/scene-graph/primitives'
-import { ColorInputRoot, inputValue } from '@open-pencil/vue'
-import type { OkHCLControls } from '@open-pencil/vue'
+import type { OkHCLControls } from '@open-pencil/vue/controls/color-model'
+import { ColorInputRoot } from '@open-pencil/vue/primitives/ColorPicker'
+import { inputValue } from '@open-pencil/vue/shared/dom-events'
 
 import ColorPicker from '@/components/ColorPicker/ColorPicker.vue'
 
@@ -20,7 +21,7 @@ const {
   editable?: boolean
   okhcl?: OkHCLControls | null
 }>()
-const emit = defineEmits<{ update: [color: Color] }>()
+const emit = defineEmits<{ update: [color: Color]; openChange: [open: boolean] }>()
 </script>
 
 <template>
@@ -32,7 +33,12 @@ const emit = defineEmits<{ update: [color: Color] }>()
   >
     <template #default="{ editable: isEditable, hex, actions, okhcl: okhclControls }">
       <div v-bind="attrs" class="flex items-center gap-1.5">
-        <ColorPicker :color="color" :okhcl="okhclControls" @update="actions.updateColor($event)" />
+        <ColorPicker
+          :color="color"
+          :okhcl="okhclControls"
+          @update="actions.updateColor($event)"
+          @open-change="emit('openChange', $event)"
+        />
         <input
           v-if="isEditable"
           data-test-id="color-hex-input"

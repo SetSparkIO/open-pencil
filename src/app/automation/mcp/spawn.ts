@@ -11,6 +11,7 @@ import {
 } from '@open-pencil/mcp/tools'
 import { randomHex } from '@open-pencil/scene-graph/random'
 
+import { APP_VERSION } from '@/app/runtime/version'
 import { decodeTauriStderr } from '@/app/shell/ui'
 import { resolvePlatformCommand } from '@/app/tauri/command'
 import { isTauri } from '@/app/tauri/env'
@@ -19,19 +20,28 @@ import { DEV_MCP_RESTART_PATH, type DevMCPConfiguration } from './dev-control'
 import {
   classifySpawnFailure,
   mcpFailure,
+  MCP_EXECUTABLE,
+  MCP_INSTALL_COMMAND,
   MCP_INSTALL_TARGET,
+  MCP_PACKAGE_NAME,
   MCPStartupError,
   type MCPFailure
 } from './failure'
-import { disabledMCPTools, mcpAuthenticationEnabled, mcpRootDirectory } from './preferences'
+import {
+  disabledMCPTools,
+  mcpAuthenticationEnabled,
+  mcpRootDirectory,
+  mcpScope
+} from './preferences'
 
 export interface AutomationHealth {
   status: 'ok' | 'no_app'
   version?: string
-  installCommand?: string
   authRequired?: boolean
   discoveryPath?: string
   tools?: ToolDescriptor[]
+  /** The server tells the app when an agent opens a session, so a chat can wait for its agent. */
+  agentSessionEvents?: boolean
 }
 
 export interface AutomationServerHandle {
@@ -51,11 +61,8 @@ const DEV_AUTOMATION_AUTH_TOKEN =
   import.meta.env.DEV && typeof __OPENPENCIL_LOCAL_AUTOMATION_TOKEN__ === 'string'
     ? __OPENPENCIL_LOCAL_AUTOMATION_TOKEN__
     : null
-const APP_VERSION =
-  typeof __OPENPENCIL_APP_VERSION__ === 'string' ? __OPENPENCIL_APP_VERSION__ : '0.0.0-test'
 const noop = () => undefined
 const MAX_STARTUP_STDERR_LENGTH = 8_192
-const MCP_EXECUTABLE = 'openpencil-mcp-http'
 
 interface MCPLookup {
   available: boolean
@@ -67,6 +74,10 @@ interface MCPLookup {
 // prevents a server that outlives a crashed/reloaded app from squatting the
 // port forever while still allowing brief renderer reloads (issue #488).
 const MCP_APP_ATTACH_TIMEOUT_MS = 30_000
+// A server started from a cold npm shim can take longer than a few seconds to answer (14.8 s on
+// a Windows VM, issue #1167). The app waits this long for it, leaving the rest of the attach
+// grace above for the app to connect once it does.
+const MCP_STARTUP_HEALTH_DEADLINE_MS = MCP_APP_ATTACH_TIMEOUT_MS - 10_000
 
 /** Delays used while a spawned server comes up; tests shorten them. */
 export interface MCPStartupTiming {
@@ -74,6 +85,8 @@ export interface MCPStartupTiming {
   earlyExitMs: number
   /** Delay before each of the health polls after spawning. */
   healthPollMs: number
+  /** How long to keep polling while the child runs before giving up on it. */
+  healthDeadlineMs?: number
 }
 const DEFAULT_STARTUP_TIMING: MCPStartupTiming = { earlyExitMs: 250, healthPollMs: 1000 }
 
@@ -120,7 +133,7 @@ function rememberStartupError(error: unknown): null {
 }
 
 /** The one discovery-file field the app reads; the MCP package validates the whole file. */
-const DiscoveryTokenJSON = v.pipe(
+const discoveryTokenSchema = v.pipe(
   v.string(),
   v.parseJson(),
   v.looseObject({ authToken: v.optional(v.nullable(v.string())) })
@@ -135,7 +148,7 @@ const DiscoveryTokenJSON = v.pipe(
 async function readDiscoveryToken(discoveryPath: string): Promise<string | null> {
   try {
     const { readTextFile } = await import('@tauri-apps/plugin-fs')
-    const info = v.safeParse(DiscoveryTokenJSON, await readTextFile(discoveryPath))
+    const info = v.safeParse(discoveryTokenSchema, await readTextFile(discoveryPath))
     return info.success ? (info.output.authToken ?? null) : null
   } catch {
     return null
@@ -232,6 +245,7 @@ interface AutomationHealthRecord {
   authRequired?: unknown
   discoveryPath?: unknown
   tools?: unknown
+  agentSessionEvents?: unknown
 }
 
 function isAutomationHealthRecord(value: unknown): value is AutomationHealthRecord {
@@ -264,25 +278,25 @@ function parseAutomationHealth(value: unknown): AutomationHealth | null {
   if (!isAutomationHealthRecord(value)) return null
   if (value.status !== 'ok' && value.status !== 'no_app') return null
   const version = optionalString(value.version)
-  const installCommand = optionalString(value.installCommand)
   const authRequired = optionalBoolean(value.authRequired)
   const discoveryPath = optionalString(value.discoveryPath)
   const tools = parseToolDescriptors(value.tools)
+  const agentSessionEvents = optionalBoolean(value.agentSessionEvents)
   if (
     version === null ||
-    installCommand === null ||
     authRequired === null ||
     discoveryPath === null ||
-    tools === null
+    tools === null ||
+    agentSessionEvents === null
   ) {
     return null
   }
   const health: AutomationHealth = { status: value.status }
   if (version !== undefined) health.version = version
-  if (installCommand !== undefined) health.installCommand = installCommand
   if (authRequired !== undefined) health.authRequired = authRequired
   if (discoveryPath !== undefined) health.discoveryPath = discoveryPath
   if (tools !== undefined) health.tools = tools
+  if (agentSessionEvents !== undefined) health.agentSessionEvents = agentSessionEvents
   return health
 }
 
@@ -332,12 +346,13 @@ function assertCompatibleMCPVersion(health: AutomationHealth): void {
   if (!oursMajorMinor) return
   if (runningMajorMinor === oursMajorMinor) return
   const runningVersion = health.version ? `v${health.version}` : 'an older version'
-  const updateHint = health.installCommand
-    ? `Run: ${health.installCommand}, then restart OpenPencil.`
-    : `Update the global @open-pencil/mcp package to v${APP_VERSION} with your package manager, then restart OpenPencil.`
-  throw new Error(
-    `OpenPencil desktop v${APP_VERSION} requires @open-pencil/mcp v${oursMajorMinor}.x ` +
-      `(major.minor compatibility), but the running MCP server is ${runningVersion}. ${updateHint}`
+  // The running server's own install command names its own version, so the fix always
+  // comes from this app's version.
+  throw new MCPStartupError(
+    `OpenPencil desktop v${APP_VERSION} requires ${MCP_PACKAGE_NAME} v${oursMajorMinor}.x ` +
+      `(major.minor compatibility), but the running MCP server is ${runningVersion}. ` +
+      `Run: ${MCP_INSTALL_COMMAND}, then restart the MCP server.`,
+    mcpFailure('outdated', health.version)
   )
 }
 
@@ -352,6 +367,36 @@ async function pollHealth(
     if (health) return health
   }
   return null
+}
+
+/**
+ * Polls a server the app just started for as long as it runs, up to a deadline, so a slow start
+ * is not mistaken for a failed one. Resolves to null when the deadline passes or the child exits.
+ */
+async function waitForHealth(
+  deadlineMs: number,
+  delayMs: number,
+  authToken: string | null,
+  childClosed: Promise<unknown>
+): Promise<AutomationHealth | null> {
+  const exited = childClosed.then(() => 'exited' as const)
+  const giveUpAt = Date.now() + deadlineMs
+  const deadline = promiseTimeout(deadlineMs).then(() => 'deadline' as const)
+  for (;;) {
+    const remainingMs = giveUpAt - Date.now()
+    if (remainingMs <= 0) return null
+    const woke = await Promise.race([
+      promiseTimeout(Math.min(delayMs, remainingMs)).then(() => 'waited' as const),
+      deadline,
+      exited
+    ])
+    if (woke !== 'waited') return null
+    // A probe still running at the deadline does not count.
+    const health = await Promise.race([readAutomationHealth(authToken), deadline, exited])
+    // An answer from a server whose process already ended does not count.
+    if (health === 'deadline' || health === 'exited') return null
+    if (health) return health
+  }
 }
 
 export async function getAutomationAuthToken(): Promise<string | null> {
@@ -414,7 +459,8 @@ async function configureDevMCP(): Promise<AutomationServerHandle> {
   const configuration: DevMCPConfiguration = {
     authenticationEnabled: mcpAuthenticationEnabled.value,
     rootDirectory: mcpRootDirectory.value,
-    disabledTools: [...disabledMCPTools.value]
+    disabledTools: [...disabledMCPTools.value],
+    scope: mcpScope()
   }
   const response = await fetch(DEV_MCP_RESTART_PATH, {
     method: 'POST',
@@ -439,6 +485,23 @@ async function configureDevMCP(): Promise<AutomationServerHandle> {
     )
   runtimeAutomationAuthToken = authToken
   return { disconnect: noop, authToken, managed: true }
+}
+
+function exitedStartupError(
+  message: string,
+  event: { code: number | null; signal: number | null },
+  stderr: string
+): MCPStartupError {
+  const details = stderr.trim()
+  return new MCPStartupError(
+    `${message} (code ${event.code ?? 'null'}, signal ${event.signal ?? 'null'})${details ? `: ${details}` : '.'}`,
+    mcpFailure(
+      'exited',
+      compact([`code=${event.code ?? 'null'}`, `signal=${event.signal ?? 'null'}`, details]).join(
+        ' '
+      )
+    )
+  )
 }
 
 async function startMCPIfNeeded(timing: MCPStartupTiming): Promise<AutomationServerHandle | null> {
@@ -473,7 +536,11 @@ async function startMCPIfNeeded(timing: MCPStartupTiming): Promise<AutomationSer
       OPENPENCIL_MCP_TCP: '1',
       OPENPENCIL_MCP_ROOT: mcpRoot,
       OPENPENCIL_MCP_APP_TIMEOUT_MS: String(MCP_APP_ATTACH_TIMEOUT_MS),
-      OPENPENCIL_MCP_DISABLED_TOOLS: serializeDisabledTools(disabledMCPTools.value)
+      // Killing the shell wrapper on Windows leaves the server it started running; the app's end
+      // of the pipe closes with it, and the server exits on that.
+      OPENPENCIL_MCP_EXIT_ON_STDIN_CLOSE: '1',
+      OPENPENCIL_MCP_DISABLED_TOOLS: serializeDisabledTools(disabledMCPTools.value),
+      OPENPENCIL_MCP_SCOPE: mcpScope()
     }
   })
 
@@ -507,22 +574,16 @@ async function startMCPIfNeeded(timing: MCPStartupTiming): Promise<AutomationSer
     promiseTimeout(timing.earlyExitMs).then(() => null)
   ])
   if (earlyExit) {
-    const details = startupStderr.trim()
     return rememberStartupError(
-      new MCPStartupError(
-        `MCP server exited before startup completed (code ${earlyExit.code ?? 'null'}, signal ${earlyExit.signal ?? 'null'})${details ? `: ${details}` : '.'}`,
-        mcpFailure(
-          'exited',
-          compact([
-            `code=${earlyExit.code ?? 'null'}`,
-            `signal=${earlyExit.signal ?? 'null'}`,
-            details
-          ]).join(' ')
-        )
-      )
+      exitedStartupError('MCP server exited before startup completed', earlyExit, startupStderr)
     )
   }
-  const health = await pollHealth(5, timing.healthPollMs, authToken)
+  const health = await waitForHealth(
+    timing.healthDeadlineMs ?? MCP_STARTUP_HEALTH_DEADLINE_MS,
+    timing.healthPollMs,
+    authToken,
+    childClosed
+  )
 
   if (health) {
     try {
@@ -553,10 +614,17 @@ async function startMCPIfNeeded(timing: MCPStartupTiming): Promise<AutomationSer
     }
   }
 
+  // A child that exited while the app waited for it is a crash, not a slow start.
+  const exitedWhileWaiting = await Promise.race([childClosed, Promise.resolve(null)])
   try {
     await child.kill().catch(() => undefined)
   } finally {
     runtimeAutomationAuthToken = null
+  }
+  if (exitedWhileWaiting) {
+    return rememberStartupError(
+      exitedStartupError('MCP server exited before it answered', exitedWhileWaiting, startupStderr)
+    )
   }
   return rememberStartupError(
     new MCPStartupError(

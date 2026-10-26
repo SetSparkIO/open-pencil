@@ -15,12 +15,20 @@ Headless Vue 3 primitives and composables; the root app is one consumer. Primiti
 
 The app's `DesignPanel` retains at most one selection-property subtree through `RetainedPanel`. The app installs `createRetainedScopePlugin()`; opted-in descendants receive `provideRetainedActivity()`. Vue component scopes are detached, so pausing only a parent or bare `KeepAlive` does not suspend descendant work. Cancel drafts synchronously before DOM detachment can fire blur, close transient state and gate portals with `useRetainedPopup()`, and invalidate pending async results on deactivation or disposal. The plugin lets cleanup flush before pausing each component scope and resumes it on activation; it requires Vue's Options API. Unmounting the owning editor releases the retained subtree.
 
+## Preview islands
+
+- Preview runs controls as real components, never as canvas simulations: `packages/vue/src/canvas/islands/` renders each top-level layer that holds an instance with a behaviour as DOM in a shadow root over the canvas, projected through `@open-pencil/dom-css`, and mounts each behaviour's Reka UI primitives on its layers. Typing, focus, and keyboard handling belong to the browser and Reka.
+- Islands adopt one token stylesheet `IslandLayer.vue` builds for all of them, with `:root` rewritten to `:host`, so the projection's `var()` references resolve in the modes their layers set; vector layers come from Core's `vectorElement`, and a shader fill draws each frame the canvas's own player publishes for its image through `canvas/surface/shader/frames.ts`, never a player of its own (`IslandShader.vue`).
+- Islands only map layers to Reka components. Which layer is a control, part, item, trigger, panel, or input comes from `behaviourControls` and `controlRoles` in `@open-pencil/dom-css`, which code export shares; never derive roles in Vue (`packages/dom-css/tests/behaviours/controls.test.ts`).
+- The concept, the pipeline from state to DOM, and how to add a kind are in `packages/docs/development/behaviours-and-preview.md`.
+- Variants draw control states: Core's `resolvePlayState` shows instances in a state on a private graph, and controls are keyed by layer path so a variant switch keeps their DOM, including a focused input. The document is never changed (`packages/core/tests/editor/play/states.test.ts`, `tests/e2e/components/behaviours.spec.ts`).
+
 ## Commands, menus, i18n
 
 - Commands use `packages/vue/src/editor/commands/registry.ts` for shortcuts, bindings, and menu IDs. Store portable tokens (`MOD+D`) and format them at render time; labels and translations never contain shortcuts.
 - Canvas menu structure lives in `packages/vue/src/editor/menu-model/canvas.ts`; the app's `CanvasMenu.vue` renders it.
 - `useEditorEvent(event, handler)` in `packages/vue/src/editor/events/use.ts` wraps the editor event bus.
-- i18n uses narrow product-domain catalogs under `packages/vue/src/i18n/messages/` with matching locale files. Inspect existing domains instead of adding generic UI/component namespaces; prefer narrow `use*Messages()` composables over aggregate `useI18n()`. `bun run check:i18n` enforces structure, placeholder parity, and reviewed translation baselines; remove stale baseline identities when fixing existing debt.
+- i18n uses narrow product-domain catalogs under `packages/vue/src/i18n/messages/` with matching locale files; namespaces of one domain share a folder (`messages/cloud/editor.ts`, `locales/<locale>/cloud/editor.json`) mapped in `LOCALE_FILE_NAMES` (`tools/checks/i18n/src/check-locales.ts`). Inspect existing domains instead of adding generic UI/component namespaces; prefer narrow `use*Messages()` composables over aggregate `useI18n()`. `bun run check:i18n` enforces structure, placeholder parity, and reviewed translation baselines; remove stale baseline identities when fixing existing debt.
 
 ## Documentation
 

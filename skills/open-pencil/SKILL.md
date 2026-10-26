@@ -22,6 +22,12 @@ openpencil tree design.fig
 
 Use `openpencil --help`, per-command help, and the connected MCP server’s tool schemas to check the installed version’s capabilities. See the [CLI reference](https://openpencil.dev/reference/cli) and [MCP guide](https://openpencil.dev/programmable/mcp-server) for current documentation.
 
+## Variable formulas
+
+Inside `eval`, use `openpencil.setVariableFormula('Spacing', 'large', '{base} * 2')` for numeric formulas or `openpencil.setVariableFormula('State', 'visible', '{viewport} > 1024 and not {loading}')` for Boolean formulas, which use `and`, `or`, `not` and number comparisons. Collections and variables must already exist. An optional fourth argument selects a mode by name; otherwise the default mode is edited. The call validates before mutation and returns the resolved value. Length formulas use stored pixels. The CSS stylesheet writes number formulas as `calc()`; design-token files hold the result with the formula in `$extensions`.
+
+Variables follow Figma's plugin API: `figma.variables.getLocalVariables()`, `createVariable(name, collection, type)`, `variable.setValueForMode(modeId, value)`, and `node.setBoundVariable(field, variable)` with Figma's field names (`characters`, `width`, `paddingLeft`) and types; paint colours bind through `figma.variables.setBoundVariableForPaint`. To bind as the layer panel does, use `openpencil.bindVariable(node, field, variable)` and `openpencil.unbindVariable(node, field)` with OpenPencil names (`text`, `visible`, `opacity`, `fills/0/color`): text content takes a text or number variable, shown as text; visibility a boolean or text one. `openpencil` also sets layout and text direction (`setLayoutDirection`, `setTextDirection`), OkHCL paint colors (`setFillOkHCL`, `setStrokeOkHCL`), exposes instance swaps (`exposeInstanceSwap`), and reports font availability (`getFontStatus()`); booleans and flattening are Figma's `figma.union`, `subtract`, `intersect`, `exclude` and `figma.flatten`.
+
 ## Requirements
 
 ```bash
@@ -54,7 +60,7 @@ Common commands:
 - `find` — find nodes by name/type
 - `query` — XPath selectors for node search
 - `variables` — list variables and collections
-- `tokens` — variables as a CSS custom-property stylesheet or Tailwind v4 theme
+- `tokens` — variables as a CSS custom-property stylesheet, a Tailwind v4 theme, or W3C design token files (`--format dtcg --out <folder>`)
 - `export` — export PNG/JPG/WEBP/SVG/PDF/JSX/.fig
 - `convert` — convert between supported document formats
 - `analyze` — colors, typography, spacing, repeated clusters
@@ -79,6 +85,7 @@ openpencil selection --json
 openpencil variables design.fig
 openpencil variables --collection "Colors" --type COLOR
 openpencil tokens design.fig --format tailwind > theme.css
+openpencil tokens design.fig --format dtcg --out tokens  # W3C design tokens; import_design_tokens reads them back
 ```
 
 ### Search and XPath query
@@ -160,7 +167,54 @@ openpencil eval design.fig -o modified.fig -c '...'
 
 # Read code from stdin
 echo 'figma.currentPage.children.map(n => n.name)' | openpencil eval design.fig --stdin
+
+# Style part of a text, and read how it is styled
+openpencil eval design.fig -w -c '
+  const title = figma.currentPage.findOne(n => n.type === "TEXT" && n.name === "Title");
+  title.setRangeFontName(0, 5, { family: "Inter", style: "Bold" });
+  title.setRangeFills(0, 5, [{ type: "SOLID", color: { r: 0.9, g: 0.1, b: 0.1 } }]);
+  title.getStyledTextSegments(["fontName", "fills"]).map(s => [s.characters, s.fontName.style])
+'
 ```
+
+Text styles follow Figma's per-character model: `getStyledTextSegments(fields)` reads runs, `getRange…`/`setRange…` read and set font, size, fills, letter spacing, line height, decorations, text case, hyperlinks, text and fill style IDs, and bound variables for `[start, end)`, and a text's `fontSize`, `fontName`, `fills`, and similar read `figma.mixed` while characters differ. Check for it before using the value. Paints everywhere take Figma's shape: a solid `color` is `{ r, g, b }` with the alpha in `opacity`, and an image is `{ type: "IMAGE", imageHash, scaleMode: "FILL" | "FIT" | "CROP" | "TILE" }` with optional `rotation` and `scalingFactor`.
+
+Next to `figma`, scripts get `openpencil`: what OpenPencil adds to the Figma API, in its style. A main component can behave as a Reka UI control, by its own property and slot names:
+
+```bash
+openpencil eval design.fig -w -c '
+  const set = figma.currentPage.findOne(n => n.type === "COMPONENT_SET" && n.name === "Switch");
+  const thumb = set.findOne(n => n.name === "Thumb");
+  const behaviour = openpencil.setBehaviour(set, "switch")
+    .bindValue("value", "State")      // On/Off guessed from the variant values
+    .bindPart("thumb", thumb);        // the frame becomes a slot
+  behaviour.states = "Interaction";
+  behaviour.missing                    // [] when the control is complete
+'
+```
+
+`openpencil.behaviourKinds` lists every kind with its values and parts; `openpencil.getBehaviour(node)` reads one (a variant reads its set's); `openpencil.createSlot(frame)` makes a frame a slot. The `set_behaviour`, `get_behaviour`, and `create_slot` tools do the same over MCP, and design JSX writes controls with Reka's element names (`Switch.Root`, `Switch.Thumb`).
+
+Comments people leave on the canvas are review feedback you can act on. Read the open ones, change the design, then answer and resolve each, naming yourself as the author:
+
+```bash
+openpencil eval design.fig -w -c '
+  openpencil.getComments({ resolved: false }).map(c => ({ id: c.id, text: c.text, layer: c.node?.name }))
+'
+# after the change:
+openpencil eval design.fig -w -c 'openpencil.getComment("c_…").reply("Title is 24px now", { author: "Claude" }).resolve()'
+```
+
+`openpencil.addComment(text, { node, page, x, y, author })` leaves a new one. Over MCP the same is `get_comments`, `add_comment`, `reply_to_comment`, and `resolve_comment`. Comment text is Markdown.
+
+Statuses say where a section, frame, component, or instance stands, from the document's own list. Read the list, find what is ready, and move a layer on once your work on it is done:
+
+```bash
+openpencil eval design.fig -c 'openpencil.statuses.map(s => s.name)'
+openpencil eval design.fig -w -c 'openpencil.setStatus(figma.currentPage.findOne(n => n.name === "Checkout"), "In review")'
+```
+
+`openpencil.getStatus(node)` reads one. Over MCP the same is `get_statuses` and `set_status`.
 
 ### Diff
 
@@ -246,13 +300,12 @@ The CLI defaults the filesystem root to the home directory on Windows and the cu
 
 ### MCP workflow
 
-1. **Find or open a document** — `list_documents` for open tabs and their IDs; `open_file { path }` within the effective filesystem root, or `new_document {}`. Pass `document_id` and `page_id` explicitly instead of relying on the active tab; `activate_document { document_id }` brings a tab to the front when the user should see it.
+1. **Find or open a document** — `list_documents` for open tabs and their IDs; `open_file { path }` within the effective filesystem root (`list_recent_files` lists recently opened files there), or `new_document {}`. Pass `document_id` and `page_id` explicitly instead of relying on the active tab; `activate_document { document_id }` brings a tab to the front when the user should see it.
 2. **Query** — `get_page_tree`, `find_nodes`, `query_nodes`, `get_node`, `list_pages`, `get_current_page`.
 3. **Inspect** — `get_jsx`, `diff_jsx`, `diff_create`, `diff_visual`, `describe`, `export_image`, `export_svg`, `export_pdf`.
 4. **Modify** — `render`, `batch_update`, `update_node`, `set_fill`, `set_layout`, `create_shape`, `import_svg`, etc.
-5. **Navigate** — after creating or editing visible canvas content, call `select_nodes` and `viewport_zoom_to_fit { id }` (or `node_bounds` + `viewport_set`) so the user can see the result in the running editor.
-6. **Save/export** — `save_file`, `export_image`, `export_svg`, `export_pdf`, or CLI `export`.
-7. **Close** — `close_file { document_id, unsaved }` closes a document tab after the workflow. With unsaved changes it fails unless `unsaved` is `"save"` or `"discard"`; automation never prompts in the app.
+5. **Save/export** — `save_file`, `export_image`, `export_svg`, `export_pdf`, or CLI `export`.
+6. **Close** — `close_file { document_id, unsaved }` closes a document tab after the workflow. With unsaved changes it fails unless `unsaved` is `"save"` or `"discard"`; automation never prompts in the app.
 
 Use `undo` / `redo { document_id }` to step back your own changes. They refuse when the newest step was made by the user in the editor; never work around that. `get_settings` and `update_settings { settings }` read and change editor preferences such as theme, language, and snapping; they never expose credentials, models, or tool access.
 
@@ -279,7 +332,7 @@ Discover available tools and their arguments from the connected server or browse
 - **`describe`** — semantic analysis of role, visual style, layout, and design issues.
 - **`batch_update`** — apply multiple node updates efficiently.
 - **`export_image` / `export_svg` / `export_pdf`** — visual verification and deliverables.
-- **`viewport_zoom_to_fit` / `viewport_set` / `viewport_get`** — keep the live editor focused on the created or edited design.
+- **`viewport_zoom_to_fit` / `viewport_set` / `viewport_get`** — move the user's view only when they ask to be shown something.
 - **`get_codegen_prompt`** — retrieve OpenPencil's current JSX/codegen guidance.
 - **`undo` / `redo`** — revert or reapply your newest change; they refuse to touch the user's edits.
 - **`list_documents` / `activate_document`** — discover open tabs and show the one you worked on.
@@ -297,8 +350,7 @@ Use the `render` tool for JSX strings. Use only the APIs exposed by the installe
 - Use `tree --depth 2` or `query_nodes` to avoid overwhelming output on large files.
 - Export specific nodes with `--node` for faster visual checks.
 - Use `export_image` after changes to verify visual quality.
-- After creating a visible design, select it and zoom the editor to it: `select_nodes { ids: [id] }` then `viewport_zoom_to_fit { id }`.
-- If zoom-to-fit is unavailable in a client, use `node_bounds` to calculate the center and call `viewport_set { x, y, zoom }`.
+- The running editor shows each MCP session as an agent at the layers its tools touch, and follows it while it works when the user has Follow agents on. Leave the user's selection and view alone unless they ask to be shown something.
 - Use `analyze colors --similar` to find near-duplicate colors.
 - Use `openpencil tool call` for MCP tools without a dedicated CLI command, and `eval` for Figma Plugin API operations not covered by any tool.
 - Use `--json` when piping CLI output to scripts.

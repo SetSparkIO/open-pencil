@@ -15,6 +15,8 @@ It exposes selected-node values like:
 - `height`
 - `rotation`
 
+`x`, `y`, and `rotation` read as Figma's properties panel shows them: the top-left of the turned layer's box on the canvas, measured from its frame or page, and its counterclockwise angle. `updateProp('x' | 'y' | 'rotation', value)` moves or turns each selected node so it shows that value, turning about its center. `panelProp(key)` gives the shared value across a multi-selection, or `MIXED`.
+
 and actions like:
 
 - align
@@ -25,7 +27,7 @@ and actions like:
 ## Usage
 
 ```ts
-import { usePosition } from '@open-pencil/vue'
+import { usePosition } from '@open-pencil/vue/controls/position'
 
 const position = usePosition()
 ```

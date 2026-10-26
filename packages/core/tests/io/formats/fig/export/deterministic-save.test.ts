@@ -1,8 +1,8 @@
 import { afterEach, expect, setSystemTime, test } from 'bun:test'
 
-import { exportFigFile } from '@open-pencil/core/io'
-import { initCodec } from '@open-pencil/core/kiwi'
+import { exportFigFile } from '@open-pencil/core/io/formats/fig'
 import { parseFigBuffer } from '@open-pencil/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
 import { SceneGraph } from '@open-pencil/scene-graph'
 
 afterEach(() => {
@@ -20,7 +20,6 @@ test('saves an unchanged document to the same bytes at any time', async () => {
   const second = await exportFigFile(graph)
 
   expect(second).toEqual(first)
-  expect(parseFigBuffer(first.buffer as ArrayBuffer).metaJSON).toBe(
-    '{"version":1,"app":"OpenPencil"}'
-  )
+  const meta: unknown = JSON.parse(parseFigBuffer(first.buffer as ArrayBuffer).metaJSON)
+  expect(meta).toMatchObject({ exported_at: '1980-01-01T00:00:00.000Z' })
 })

@@ -1,4 +1,6 @@
 import { scaleGeometryPaths } from '../copy'
+import { scaledTextLength } from '../text/lengths'
+import { TEXT_PARAGRAPH_SPACING_FIELDS } from '../text/paragraphs'
 import {
   type Effect,
   type Fill,
@@ -6,7 +8,8 @@ import {
   type LayoutGrid,
   type SceneNode,
   type Stroke,
-  type StyleRun
+  type StyleRun,
+  type TextParagraphStyle
 } from '../types'
 import { cloneVectorNetwork } from '../vector-network'
 
@@ -51,12 +54,26 @@ function scaledStyleRuns(styleRuns: readonly StyleRun[], scale: number): StyleRu
     style: {
       ...structuredClone(run.style),
       fontSize: run.style.fontSize == null ? undefined : run.style.fontSize * scale,
-      letterSpacing: run.style.letterSpacing == null ? undefined : run.style.letterSpacing * scale,
-      lineHeight: scaledOptional(run.style.lineHeight ?? null, scale),
+      letterSpacing: run.style.letterSpacing && scaledTextLength(run.style.letterSpacing, scale),
+      lineHeight: run.style.lineHeight && scaledTextLength(run.style.lineHeight, scale),
       textDecorationThickness: scaledOptional(run.style.textDecorationThickness ?? null, scale),
       textUnderlineOffset: scaledOptional(run.style.textUnderlineOffset ?? null, scale)
     }
   }))
+}
+
+function scaledParagraphStyles(
+  paragraphs: readonly TextParagraphStyle[],
+  scale: number
+): TextParagraphStyle[] {
+  return paragraphs.map((style) => {
+    const scaled = { ...style }
+    for (const field of TEXT_PARAGRAPH_SPACING_FIELDS) {
+      const value = style[field]
+      if (value !== undefined) scaled[field] = value * scale
+    }
+    return scaled
+  })
 }
 
 function scaledLayoutGrids(grids: readonly LayoutGrid[], scale: number): LayoutGrid[] {
@@ -111,11 +128,15 @@ export function scaleNodeChanges(
     bottomRightRadius: node.bottomRightRadius * scale,
     bottomLeftRadius: node.bottomLeftRadius * scale,
     fontSize: node.fontSize * scale,
-    letterSpacing: node.letterSpacing * scale,
-    lineHeight: scaledOptional(node.lineHeight, scale),
+    letterSpacing: scaledTextLength(node.letterSpacing, scale),
+    lineHeight: node.lineHeight && scaledTextLength(node.lineHeight, scale),
     textDecorationThickness: scaledOptional(node.textDecorationThickness, scale),
     textUnderlineOffset: scaledOptional(node.textUnderlineOffset, scale),
     styleRuns: scaledStyleRuns(node.styleRuns, scale),
+    listSpacing: node.listSpacing * scale,
+    paragraphSpacing: node.paragraphSpacing * scale,
+    paragraphIndent: node.paragraphIndent * scale,
+    textParagraphs: scaledParagraphStyles(node.textParagraphs, scale),
     itemSpacing: node.itemSpacing * scale,
     counterAxisSpacing: node.counterAxisSpacing * scale,
     paddingTop: node.paddingTop * scale,
@@ -127,6 +148,7 @@ export function scaleNodeChanges(
     gridTemplateColumns: scaledGridTracks(node.gridTemplateColumns, scale),
     gridTemplateRows: scaledGridTracks(node.gridTemplateRows, scale),
     strokes: scaledStrokes(node.strokes, scale),
+    strokeWeight: node.strokeWeight * scale,
     dashPattern: node.dashPattern.map((value) => value * scale),
     borderTopWeight: node.borderTopWeight * scale,
     borderRightWeight: node.borderRightWeight * scale,

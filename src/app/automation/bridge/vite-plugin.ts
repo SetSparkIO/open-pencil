@@ -5,6 +5,7 @@ import type { IncomingMessage } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { delay } from 'es-toolkit'
 import type { Plugin } from 'vite'
 
 import { serializeDisabledTools } from '@open-pencil/mcp/tools'
@@ -42,7 +43,8 @@ export function createAutomationEnvironment(
     OPENPENCIL_MCP_AUTH_TOKEN: configuration.authenticationEnabled ? (authToken ?? '') : '',
     OPENPENCIL_MCP_CORS_ORIGIN: corsOrigin,
     OPENPENCIL_MCP_ROOT: configuration.rootDirectory.trim() || process.cwd(),
-    OPENPENCIL_MCP_DISABLED_TOOLS: serializeDisabledTools(configuration.disabledTools)
+    OPENPENCIL_MCP_DISABLED_TOOLS: serializeDisabledTools(configuration.disabledTools),
+    OPENPENCIL_MCP_SCOPE: configuration.scope
   }
   if (socketPath) environment.OPENPENCIL_MCP_SOCKET = socketPath
   if (discoveryPath) environment.OPENPENCIL_MCP_DISCOVERY_PATH = discoveryPath
@@ -120,9 +122,7 @@ export async function waitForAutomationHealth(
     }
     options.assertRunning?.()
     if (healthy) return
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, CHILD_HEALTH_DELAY_MS)
-    })
+    await delay(CHILD_HEALTH_DELAY_MS)
   }
   throw new Error(`MCP server did not become healthy at ${healthURL}`)
 }
@@ -146,6 +146,7 @@ export function configurationsMatch(
   return (
     current.authenticationEnabled === next.authenticationEnabled &&
     current.rootDirectory === next.rootDirectory &&
+    current.scope === next.scope &&
     current.disabledTools.length === next.disabledTools.length &&
     current.disabledTools.every((tool, index) => tool === next.disabledTools[index])
   )
@@ -161,7 +162,8 @@ export function automationPlugin(
   let configuration: DevMCPConfiguration = {
     authenticationEnabled: true,
     rootDirectory: '',
-    disabledTools: []
+    disabledTools: [],
+    scope: 'document'
   }
 
   function enqueue(operation: () => Promise<void>): Promise<void> {

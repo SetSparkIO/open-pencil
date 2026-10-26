@@ -12,7 +12,7 @@ Use it when you want direct control over collections, active modes, filtering, a
 ## Usage
 
 ```ts
-import { useVariables } from '@open-pencil/vue'
+import { useVariables } from '@open-pencil/vue/variables'
 
 const variables = useVariables()
 ```
@@ -33,12 +33,3 @@ const variables = useVariables()
 - `removeVariable()`
 - `renameVariable()`
 - `updateVariableValue()`
-- `formatModeValue()`
-- `parseVariableValue()`
-- `shortName()`
-
-## Related APIs
-
-- [useVariablesEditor](../composables/use-variables-editor)
-- [useVariablesDialogState](./use-variables-dialog-state)
-- [useVariablesTable](./use-variables-table)

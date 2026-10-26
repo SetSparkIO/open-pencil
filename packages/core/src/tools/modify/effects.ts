@@ -4,8 +4,7 @@ import { parseColor } from '@open-pencil/scene-graph/color'
 
 import { DEFAULT_SHADOW_COLOR } from '#core/constants'
 import type { FigmaEffect } from '#core/figma-api/effects'
-import { toolNumber, nodeIdInput } from '#core/tools/input'
-import { defineTool, nodeNotFound } from '#core/tools/schema'
+import { toolNumber, nodeIdInputSchema, defineTool, nodeNotFound } from '#core/tools/schema'
 
 export const setEffects = defineTool({
   name: 'set_effects',
@@ -13,8 +12,8 @@ export const setEffects = defineTool({
   description:
     'Set effects on a node (drop shadow, inner shadow, blur). Pass an array or a single effect.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     type: v.pipe(
       v.picklist(['DROP_SHADOW', 'INNER_SHADOW', 'FOREGROUND_BLUR', 'BACKGROUND_BLUR']),
       v.description('Effect type')

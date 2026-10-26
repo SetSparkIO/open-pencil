@@ -1,24 +1,33 @@
 <script setup lang="ts">
 import type { Chat } from '@ai-sdk/vue'
 import type { UIMessage } from 'ai'
-import { computed, shallowRef, watch } from 'vue'
+import { computed, shallowRef, useTemplateRef, watch } from 'vue'
 
-import { useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
 
+import { revokeImagePreviewURL } from '@/app/ai/attachment/image/prepare'
 import { chatDocumentId } from '@/app/ai/chat/history/document'
 import { useChatRunLocation } from '@/app/ai/chat/run-location'
+import { providerID } from '@/app/ai/chat/storage'
+import type { ChatSubmission } from '@/app/ai/chat/submission/types'
 import { useChatSubmission } from '@/app/ai/chat/submission/use'
+import { saveChatTrace } from '@/app/ai/chat/trace/export'
 import { useAIChat } from '@/app/ai/chat/use'
+import { openAISetup } from '@/app/ai/models/settings/onboarding/dialog'
+import { OPENPENCIL_AI_PROVIDER } from '@/app/ai/providers/openpencil/provider'
 import { didHitStepLimit } from '@/app/ai/tools'
+import { cloudBillingURL } from '@/app/cloud/integration'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
-import { toast } from '@/app/shell/ui'
+import { openExternalLink, toast } from '@/app/shell/ui'
 import { activeTab } from '@/app/tabs'
 import ACPPermissionDialog from '@/components/chat/ACPPermissionDialog.vue'
 import ChatHistory from '@/components/chat/ChatHistory.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatRunLocation from '@/components/chat/ChatRunLocation.vue'
 import ChatTranscript from '@/components/chat/ChatTranscript.vue'
+import FollowAgentsToggle from '@/components/chat/FollowAgentsToggle.vue'
+import { useImageDrop } from '@/components/chat/input/useImageDrop'
 import ProviderSetup from '@/components/chat/ProviderSetup.vue'
 
 const { isConfigured, ensureChat, history, chatFailure, clearChatFailure } = useAIChat()
@@ -35,13 +44,41 @@ const submission = useChatSubmission({
   messages: computed(() => ({
     openSettings: ai.value.openProviderSettingsAction,
     requestFailed: ai.value.chatRequestFailed,
-    visionUnavailable: ai.value.visionModelUnavailable
+    visionUnavailable: ai.value.visionModelUnavailable,
+    cloudUnavailable: ai.value.chatCloudUnavailable,
+    runSetup: ai.value.aiSetupRun,
+    agentSetup: {
+      'companion-missing': ai.value.chatPiCompanionMissing,
+      'companion-outdated': ai.value.chatPiCompanionOutdated,
+      'mcp-outdated': ai.value.chatMCPOutdated,
+      'pi-sign-in': ai.value.chatPiSignIn,
+      'pi-model': ai.value.chatPiModel
+    }
   })),
   reportError: toast.error,
-  openModelSettings: () => openSettingsDialog('ai')
+  openModelSettings: () => openSettingsDialog('ai'),
+  openSetup: () => openAISetup()
 })
 
+const chatInput = useTemplateRef<{
+  restoreDraft: (submission: ChatSubmission) => void
+  dropFiles: (files: File[]) => void
+}>('chatInput')
+const panel = useTemplateRef<HTMLElement>('panel')
+// Images dropped anywhere on the chat go to the composer, when there is one to take them.
+const { dragging: draggingImages } = useImageDrop(panel, {
+  enabled: () => chatInput.value !== null,
+  onImages: (files) => chatInput.value?.dropFiles(files)
+})
 let viewGeneration = 0
+
+/** Puts an unsent message back only in the conversation it was written in. */
+async function submitMessage(message: ChatSubmission) {
+  const generation = viewGeneration
+  if (await submission.submit(message)) return
+  if (generation === viewGeneration) chatInput.value?.restoreDraft(message)
+  else for (const image of message.images) revokeImagePreviewURL(image.previewURL)
+}
 // Restoring local history must not open a provider connection or read credentials.
 void history.initialize().catch(() => {
   toast.error(ai.value.chatHistoryFailed)
@@ -81,6 +118,16 @@ async function renameConversation(id: string, title: string) {
   }
 }
 
+async function saveTrace(id: string) {
+  const conversation = history.current.value
+  if (conversation?.id !== id) return
+  try {
+    await saveChatTrace(conversation, messages.value)
+  } catch {
+    toast.error(ai.value.chatTraceFailed)
+  }
+}
+
 const failureMessage = computed(() => {
   switch (chatFailure.value?.reason) {
     case 'authentication':
@@ -88,7 +135,9 @@ const failureMessage = computed(() => {
     case 'forbidden':
       return ai.value.chatForbidden
     case 'insufficient-credit':
-      return ai.value.chatInsufficientCredit
+      return providerID.value === OPENPENCIL_AI_PROVIDER
+        ? ai.value.chatCloudCreditsExhausted
+        : ai.value.chatInsufficientCredit
     case 'model-not-found':
       return ai.value.chatModelNotFound
     case 'network':
@@ -99,12 +148,18 @@ const failureMessage = computed(() => {
       return ai.value.chatRateLimited
     case 'request-failed':
       return ai.value.chatRequestFailed
+    case 'sign-in-expired':
+      return ai.value.chatSignInExpired
+    case 'plan-forbidden':
+      return ai.value.chatPlanForbidden
     default:
       return null
   }
 })
 const failureHasSettingsAction = computed(() =>
-  ['authentication', 'forbidden', 'model-not-found'].includes(chatFailure.value?.reason ?? '')
+  ['authentication', 'forbidden', 'model-not-found', 'sign-in-expired', 'plan-forbidden'].includes(
+    chatFailure.value?.reason ?? ''
+  )
 )
 const status = computed(() => chat.value?.status ?? 'ready')
 const showContinue = computed(() => {
@@ -115,21 +170,38 @@ const showContinue = computed(() => {
   return last.role === 'assistant' && didHitStepLimit()
 })
 
+// Asking again clears the failure, and its notice goes with it.
+let failureToast: number | null = null
+/** The notice outlives a switch to another tab, whose chat its Retry must not touch. */
+function retryFailed(messageId: string | undefined): void {
+  if (messageId && chat.value?.messages.at(-1)?.id === messageId) void submission.regenerate()
+}
 watch(
   () => chatFailure.value?.reason,
   (reason) => {
+    if (failureToast !== null) toast.remove(failureToast)
+    failureToast = null
     if (!reason) return
-    toast.error(
+    const failedId = chat.value?.messages.at(-1)?.id
+    failureToast = toast.error(
       failureMessage.value ?? ai.value.chatRequestFailed,
-      failureHasSettingsAction.value
-        ? {
-            label: ai.value.openProviderSettingsAction,
-            run: () => openSettingsDialog('ai')
-          }
-        : undefined
+      failureAction(failedId)
     )
   }
 )
+function failureAction(failedId: string | undefined): { label: string; run: () => void } {
+  const billingURL = cloudBillingURL.value
+  if (
+    chatFailure.value?.reason === 'insufficient-credit' &&
+    providerID.value === OPENPENCIL_AI_PROVIDER &&
+    billingURL
+  ) {
+    return { label: ai.value.manageCloudPlanAction, run: () => void openExternalLink(billingURL) }
+  }
+  return failureHasSettingsAction.value
+    ? { label: ai.value.openProviderSettingsAction, run: () => openSettingsDialog('ai') }
+    : { label: ai.value.retryRequest, run: () => retryFailed(failedId) }
+}
 watch(
   () => [activeTab.value?.id, activeTab.value?.store.state.preparation] as const,
   async ([tabId, preparation], [previousTabId]) => {
@@ -164,7 +236,11 @@ function handleStop() {
 </script>
 
 <template>
-  <div data-test-id="chat-panel" class="flex min-w-0 flex-1 flex-col overflow-hidden select-text">
+  <div
+    ref="panel"
+    data-test-id="chat-panel"
+    class="flex min-w-0 flex-1 flex-col overflow-hidden select-text"
+  >
     <ChatHistory
       :saved="history.conversations.value.some((row) => row.id === history.current.value?.id)"
       :conversations="historyOptions"
@@ -173,9 +249,12 @@ function handleStop() {
       @create="historyAction(history.newChat)"
       @select="historyAction(() => history.open($event))"
       @rename="renameConversation"
+      @save-trace="saveTrace"
       @delete="historyAction(() => history.remove($event))"
-    />
-    <p v-if="history.storageError.value" role="alert" class="px-3 py-2 text-xs text-red-400">
+    >
+      <template #actions><FollowAgentsToggle /></template>
+    </ChatHistory>
+    <p v-if="history.storageError.value" role="alert" class="px-3 py-2 text-xs text-error">
       {{ ai.chatStorageFailed }}
     </p>
     <ProviderSetup v-if="!isConfigured" />
@@ -193,6 +272,11 @@ function handleStop() {
         :status="status"
         :show-continue="showContinue"
         :nodes-live="!history.readOnly.value"
+        :interactive="chat !== null && !submission.busy.value"
+        @regenerate="submission.regenerate()"
+        @revert="(messageId) => submission.revert(messageId)"
+        @restore="(messageId) => submission.restore(messageId)"
+        @edit="(messageId, text) => submission.resend(messageId, text)"
         @continue="
           submission.submit({
             modelText: 'Continue where you left off',
@@ -217,9 +301,11 @@ function handleStop() {
       />
       <ChatInput
         v-if="isConfigured && !agentHistoryReadOnly && !history.readOnly.value"
+        ref="chatInput"
         :status="status"
+        :dragging="draggingImages"
         :disabled="submission.busy.value || history.busy.value"
-        @submit="submission.submit"
+        @submit="submitMessage"
         @stop="handleStop"
         @error="toast.error"
       />

@@ -33,11 +33,11 @@ test.describe(`collaboration ${available ? 'on (default build)' : 'off'}`, () =>
     )
   })
 
-  test('a share link prompts to join only when collaboration is on', async ({ page }) => {
-    await openEditor(page, `/share/${ROOM_ID}`)
+  test('a room link prompts to join only when collaboration is on', async ({ page }) => {
+    await openEditor(page, `/rooms/${ROOM_ID}`)
     const prompt = page.getByRole('dialog', { name: 'Join room' })
     if (available) {
-      await expect(page).toHaveURL(`/share/${ROOM_ID}`)
+      await expect(page).toHaveURL(`/rooms/${ROOM_ID}`)
       await expect(prompt).toBeVisible()
       await expect(prompt.getByText('Join collaboration', { exact: true })).toBeVisible()
       await expect(prompt.getByRole('textbox', { name: 'Enter your name' })).toBeVisible()

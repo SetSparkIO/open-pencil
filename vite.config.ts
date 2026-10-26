@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import process from 'node:process'
 
 import tailwindcss from '@tailwindcss/vite'
@@ -8,6 +9,7 @@ import Components from 'unplugin-vue-components/vite'
 import { defineConfig, loadEnv } from 'vite'
 
 import { ensureBrandAssets } from '@open-pencil/brand-tools'
+import { ensureDemoDocument } from '@open-pencil/demo-tools'
 
 import packageJson from './package.json'
 import { viteBuildTarget } from './src/app/shell/support/baseline'
@@ -18,7 +20,10 @@ import {
   localAutomationToken,
   openPencilAutomationPlugin
 } from './vite/automation'
-import { copyCanvasKitAssetsPlugin } from './vite/canvaskit-assets'
+import { bootSplashPlugin } from './vite/boot-splash'
+import { cloudSitePlugin } from './vite/cloud-site'
+import { aiIconCollection } from './vite/icons'
+import { metricsBrandPlugin } from './vite/metrics'
 import { openPencilPwaPlugin } from './vite/pwa'
 import { rawMarkdownPlugin } from './vite/raw-markdown'
 import { createDevServerOptions } from './vite/server'
@@ -27,14 +32,26 @@ const host = process.env.TAURI_DEV_HOST
 const automationRoute = localAutomationRoute(host)
 
 export default defineConfig(async ({ command, mode }) => {
-  await ensureBrandAssets(['web'])
+  // `--mode cloud` builds what a Cloud server serves on its own address: the editor and the
+  // server's own pages (`cloud.html`).
+  const cloudSite = mode === 'cloud'
+  // `--mode metrics` builds only the metrics dashboard (`metrics.html`) for the feedback Worker,
+  // which serves it under /admin behind Cloudflare Access.
+  const metrics = mode === 'metrics'
   const env = loadEnv(mode, __dirname, 'VITE_')
+  // `VITE_OPENPENCIL_CLOUD=off` builds the editor without OpenPencil Cloud.
+  const cloud = env.VITE_OPENPENCIL_CLOUD !== 'off'
+  await Promise.all([ensureBrandAssets(['web']), metrics ? undefined : ensureDemoDocument()])
   return {
     resolve: {
-      alias: createOpenPencilAliases(__dirname)
+      alias: createOpenPencilAliases(__dirname, { cloud })
     },
     define: {
       __OPENPENCIL_APP_VERSION__: JSON.stringify(packageJson.version),
+      __OPENPENCIL_CLOUD_SITE__: JSON.stringify(cloudSite),
+      __OPENPENCIL_OFFICIAL_CLOUD_URL__: JSON.stringify(
+        env.VITE_OPENPENCIL_OFFICIAL_CLOUD_URL ?? null
+      ),
       __OPENPENCIL_LOCAL_AUTOMATION_TOKEN__: JSON.stringify(localAutomationToken(command)),
       __OPENPENCIL_LOCAL_AUTOMATION_URL__: JSON.stringify(automationRoute.browserURL),
       __OPENPENCIL_LOCAL_AUTOMATION_HTTP_URL__: JSON.stringify(
@@ -45,21 +62,42 @@ export default defineConfig(async ({ command, mode }) => {
     optimizeDeps: { include: ['ai/test'] },
     plugins: [
       rawMarkdownPlugin(),
-      copyCanvasKitAssetsPlugin(),
+      bootSplashPlugin({
+        entry: resolve(__dirname, 'src/splash/theme.ts'),
+        pages: ['index.html', 'cloud.html', 'metrics.html']
+      }),
       tailwindcss(),
-      Icons({ compiler: 'vue3' }),
-      Components({ resolvers: [IconsResolver({ prefix: 'icon' })] }),
-      openPencilAutomationPlugin(command, host),
+      Icons({ compiler: 'vue3', customCollections: { ai: aiIconCollection() } }),
+      Components({ resolvers: [IconsResolver({ prefix: 'icon', customCollections: ['ai'] })] }),
+      metrics ? undefined : openPencilAutomationPlugin(command, host),
       vue(),
-      openPencilPwaPlugin({
-        serviceWorker: serviceWorkerEnabled(env.VITE_OPENPENCIL_SERVICE_WORKER)
-      })
+      metrics
+        ? metricsBrandPlugin((outDir) => resolve(outDir, '..'))
+        : openPencilPwaPlugin({
+            serviceWorker: serviceWorkerEnabled(env.VITE_OPENPENCIL_SERVICE_WORKER)
+          }),
+      cloudSite ? cloudSitePlugin() : undefined
     ],
     clearScreen: false,
+    publicDir: metrics ? false : 'public',
+    base: metrics ? '/admin/' : '/',
     build: {
       // Syntax is lowered to the supported browser baseline; APIs are not polyfilled.
       target: viteBuildTarget(),
-      chunkSizeWarningLimit: 2500
+      chunkSizeWarningLimit: 2500,
+      outDir: metrics ? 'dist-metrics/admin' : cloudSite ? 'dist-cloud' : 'dist',
+      rolldownOptions: {
+        // The desktop Software Update window is its own page; a Cloud server adds its own
+        // pages beside the editor, and the metrics dashboard builds alone.
+        input: metrics
+          ? { metrics: resolve(__dirname, 'metrics.html') }
+          : cloudSite
+            ? { main: resolve(__dirname, 'index.html'), cloud: resolve(__dirname, 'cloud.html') }
+            : {
+                main: resolve(__dirname, 'index.html'),
+                updater: resolve(__dirname, 'updater.html')
+              }
+      }
     },
     server: createDevServerOptions(host, __dirname)
   }

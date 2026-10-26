@@ -1,4 +1,5 @@
 import { omit } from 'es-toolkit/object'
+import { isEqual } from 'es-toolkit/predicate'
 
 import type { CharacterStyleOverride, StyleRun, TextDecoration } from '@open-pencil/scene-graph'
 
@@ -75,18 +76,6 @@ export function selectionHasStyle(
   return true
 }
 
-function stylesEqual(a: CharacterStyleOverride | null, b: CharacterStyleOverride | null): boolean {
-  if (a === b) return true
-  if (!a || !b) return a === b
-  const aKeys = Object.keys(a) as (keyof CharacterStyleOverride)[]
-  const bKeys = Object.keys(b) as (keyof CharacterStyleOverride)[]
-  if (aKeys.length !== bKeys.length) return false
-  for (const k of aKeys) {
-    if (a[k] !== b[k]) return false
-  }
-  return true
-}
-
 function isEmptyStyle(style: CharacterStyleOverride | null): boolean {
   return !style || Object.keys(style).length === 0
 }
@@ -105,7 +94,7 @@ function compactRuns(chars: (CharacterStyleOverride | null)[]): StyleRun[] {
       i++
       continue
     }
-    while (i < chars.length && stylesEqual(chars[i], style)) i++
+    while (i < chars.length && isEqual(chars[i], style)) i++
     result.push({ start, length: i - start, style: { ...style } })
   }
   return result
@@ -125,6 +114,41 @@ export function adjustRunsForInsert(
     }
     return run
   })
+}
+
+/**
+ * The runs after `length` characters are inserted at `pos`, the new characters all in `style`
+ * and every other character keeping its own. Works on the runs, not on each character, so a
+ * long insert costs no more than a short one.
+ */
+export function insertRunsWithStyle(
+  runs: StyleRun[],
+  pos: number,
+  length: number,
+  style: CharacterStyleOverride
+): StyleRun[] {
+  const moved: StyleRun[] = []
+  for (const run of runs) {
+    const end = run.start + run.length
+    if (end <= pos) moved.push(run)
+    else if (run.start >= pos) moved.push({ ...run, start: run.start + length })
+    else {
+      // The insert splits this run in two around the new characters.
+      moved.push({ ...run, length: pos - run.start })
+      moved.push({ ...run, start: pos + length, length: end - pos })
+    }
+  }
+  if (length > 0 && !isEmptyStyle(style)) moved.push({ start: pos, length, style: { ...style } })
+  moved.sort((first, second) => first.start - second.start)
+  // Runs that meet with the same style become one, as compactRuns leaves them.
+  const merged: StyleRun[] = []
+  for (const run of moved) {
+    const last = merged.at(-1)
+    if (last && last.start + last.length === run.start && isEqual(last.style, run.style)) {
+      merged[merged.length - 1] = { ...last, length: last.length + run.length }
+    } else merged.push(run)
+  }
+  return merged
 }
 
 export function adjustRunsForDelete(

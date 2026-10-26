@@ -1,17 +1,15 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { fileURLToPath } from 'node:url'
 
 import { expect, test, type Browser } from '@playwright/test'
 
 import { CanvasHelper } from '#tests/helpers/canvas'
 import { collaborationErrors, connect, type Peer } from '#tests/helpers/collab/room'
+import { repoPath } from '#tests/helpers/paths'
 
 const APP_ORIGIN = `http://localhost:${process.env.OPENPENCIL_TEST_PORT ?? '1420'}`
 const LOST = 'Collaboration relay connection lost; reconnecting'
-const RELAY_MAIN = fileURLToPath(
-  new URL('../../../tools/dev/collab-relay/src/main.ts', import.meta.url)
-)
+const RELAY_MAIN = repoPath('tools', 'dev', 'collab-relay', 'src', 'main.ts')
 
 type RelayProcess = { url: string; port: string; stop: () => Promise<void> }
 

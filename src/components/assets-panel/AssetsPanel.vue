@@ -12,15 +12,16 @@ import {
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 
 import type { SceneNode } from '@open-pencil/scene-graph'
+import { cycleSafeParent } from '@open-pencil/scene-graph/instances'
 import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
-import { useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
 
 import { useEditorStore } from '@/app/editor/active-store'
-import { nodeIcon } from '@/app/editor/icons'
 import { useLibraryService } from '@/app/libraries'
 import { openExternalLink } from '@/app/shell/ui'
 import AssetThumbnail from '@/components/assets-panel/AssetThumbnail.vue'
 import { findAssetPage } from '@/components/assets-panel/page'
+import { nodeIcon } from '@/components/icons'
 import LibraryManagerDialog from '@/components/libraries/LibraryManagerDialog.vue'
 import { useLibraryEntry } from '@/components/libraries/useLibraryEntry'
 import AppButton from '@/components/ui/button/AppButton.vue'
@@ -28,6 +29,8 @@ import { AppDialogRoot, useDialogUI } from '@/components/ui/dialog'
 import AppPlaceholder from '@/components/ui/feedback/AppPlaceholder.vue'
 import AppInput from '@/components/ui/input/AppInput.vue'
 import { useMenuUI } from '@/components/ui/menu/menu'
+import MenuScrollArea from '@/components/ui/menu/MenuScrollArea.vue'
+import { useHeldContent } from '@/components/ui/overlay/held'
 import Tip from '@/components/ui/overlay/Tip.vue'
 import SegmentedControl from '@/components/ui/select/SegmentedControl.vue'
 import { ASSET_GRID_THUMBNAIL_SIZE, ASSET_LIST_THUMBNAIL_SIZE } from '@/constants'
@@ -204,6 +207,11 @@ const selectedAsset = computed(
   () => assets.value.find((asset) => asset.id === selectedAssetId.value) ?? null
 )
 const selectedPreviewNodeId = computed(() => selectedAsset.value?.componentId ?? null)
+// An asset deleted while its details are open closes them; they keep showing it as they fade.
+const shownAsset = useHeldContent(selectedAsset)
+watch(selectedAsset, (asset) => {
+  if (!asset) detailsOpen.value = false
+})
 
 onMounted(() => {
   void libraryService.refresh(editor)
@@ -213,10 +221,12 @@ function clearPreview() {
   previewBlob.value = null
 }
 
-async function updatePreview() {
+async function updatePreview(opening = false) {
+  // Closing keeps the preview the dialog showed while it animates out.
+  if (!detailsOpen.value && !opening) return
   const requestId = ++previewRequestId
   const nodeId = selectedPreviewNodeId.value
-  if (!detailsOpen.value || !nodeId) {
+  if (!nodeId) {
     clearPreview()
     return
   }
@@ -241,12 +251,19 @@ async function updatePreview() {
   }
 }
 
-watch([detailsOpen, selectedPreviewNodeId, () => editor.state.sceneVersion], updatePreview, {
-  flush: 'post'
-})
+watch(
+  [detailsOpen, selectedPreviewNodeId, () => editor.state.sceneVersion],
+  () => updatePreview(),
+  {
+    flush: 'post'
+  }
+)
 
-function openDetails(asset: LocalAsset) {
+/** Renders the preview before opening, so the dialog never shows another asset's or none. */
+async function openDetails(asset: LocalAsset) {
+  if (asset.id !== selectedAssetId.value) clearPreview()
   selectedAssetId.value = asset.id
+  await updatePreview(true)
   detailsOpen.value = true
 }
 
@@ -285,7 +302,11 @@ async function insertAsset(asset: LocalAsset) {
   if (!componentId) return
   const component = editor.graph.getNode(componentId)
   if (!component) return
-  const parentId = editor.state.enteredContainerId ?? editor.state.currentPageId
+  const parentId = cycleSafeParent(
+    editor.graph,
+    editor.state.enteredContainerId ?? editor.state.currentPageId,
+    [componentId]
+  )
   const point = insertionPoint(component, parentId)
   editor.createInstanceFromComponent(componentId, point.x, point.y, parentId)
   editor.requestRender()
@@ -305,7 +326,7 @@ function focusAsset(asset: LocalAsset) {
 function onAssetKeydown(event: KeyboardEvent, asset: LocalAsset) {
   if ((event.metaKey || event.ctrlKey) && event.code === 'Enter') {
     event.preventDefault()
-    openDetails(asset)
+    void openDetails(asset)
     return
   }
   if (event.code === 'Enter' || event.code === 'Space') {
@@ -341,7 +362,7 @@ async function insertSelectedAsset() {
         <icon-lucide-library class="size-3.5" />
         <span
           v-if="libraryUpdateCount > 0"
-          class="absolute top-0.5 right-0.5 min-w-2.5 rounded-full bg-accent px-0.5 text-center text-[8px] leading-2.5 text-white"
+          class="absolute top-0.5 right-0.5 min-w-2.5 rounded-full bg-accent px-0.5 text-center text-[8px] leading-2.5 text-on-accent"
         >
           {{ libraryUpdateCount }}
         </span>
@@ -376,12 +397,12 @@ async function insertSelectedAsset() {
                 :draggable="!!asset.componentId"
                 :aria-busy="insertingAssetId === asset.id"
                 :class="[
-                  'group/asset rounded text-left text-xs text-surface outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-accent',
+                  'group/asset rounded text-left text-xs text-surface outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-panel-focus',
                   assetView === 'grid'
                     ? 'flex min-w-0 flex-col items-center gap-1 p-1.5'
                     : 'flex w-full items-center gap-2 px-1.5 py-1'
                 ]"
-                @click="openDetails(asset)"
+                @click="void openDetails(asset)"
                 @keydown="onAssetKeydown($event, asset)"
                 @dragstart="onDragStart($event, asset)"
               >
@@ -432,7 +453,7 @@ async function insertSelectedAsset() {
                   <span
                     v-if="assetView === 'list' && asset.hasConflicts"
                     data-test-id="asset-variant-conflict"
-                    class="mt-0.5 block truncate text-[10px] text-[var(--color-warning-text)]"
+                    class="mt-0.5 block truncate text-[10px] text-warning"
                   >
                     {{ panels.duplicateVariantValues }}
                   </span>
@@ -464,21 +485,23 @@ async function insertSelectedAsset() {
             </ContextMenuTrigger>
             <ContextMenuPortal>
               <ContextMenuContent :class="contextMenu.content">
-                <ContextMenuItem
-                  v-if="!asset.libraryId"
-                  data-test-id="asset-context-go-to-main"
-                  :class="contextMenu.item"
-                  @select="focusAsset(asset)"
-                >
-                  {{ panels.goToMainComponent }}
-                </ContextMenuItem>
-                <ContextMenuItem
-                  data-test-id="asset-context-view-details"
-                  :class="contextMenu.item"
-                  @select="openDetails(asset)"
-                >
-                  {{ panels.viewDetails }}
-                </ContextMenuItem>
+                <MenuScrollArea>
+                  <ContextMenuItem
+                    v-if="!asset.libraryId"
+                    data-test-id="asset-context-go-to-main"
+                    :class="contextMenu.item"
+                    @select="focusAsset(asset)"
+                  >
+                    {{ panels.goToMainComponent }}
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    data-test-id="asset-context-view-details"
+                    :class="contextMenu.item"
+                    @select="void openDetails(asset)"
+                  >
+                    {{ panels.viewDetails }}
+                  </ContextMenuItem>
+                </MenuScrollArea>
               </ContextMenuContent>
             </ContextMenuPortal>
           </ContextMenuRoot>
@@ -500,24 +523,22 @@ async function insertSelectedAsset() {
     <LibraryManagerDialog v-model="librariesOpen" :initial-section="libraryInitialSection" />
 
     <AppDialogRoot
-      v-if="selectedAsset"
+      v-if="shownAsset"
       v-model:open="detailsOpen"
       size="lg"
       data-test-id="asset-details-dialog"
     >
       <div class="flex items-center justify-between border-b border-border px-4 py-3">
         <div class="flex min-w-0 items-center gap-2">
-          <component :is="nodeIcon(selectedAsset.node)" class="size-4 shrink-0 text-component" />
+          <component :is="nodeIcon(shownAsset.node)" class="size-4 shrink-0 text-component" />
           <div class="min-w-0">
-            <DialogTitle :class="dialog.title" class="truncate">{{
-              selectedAsset.name
-            }}</DialogTitle>
+            <DialogTitle :class="dialog.title" class="truncate">{{ shownAsset.name }}</DialogTitle>
             <p class="mt-0.5 text-[11px] text-muted">
               {{
-                selectedAsset.node.type === 'COMPONENT_SET' ? panels.componentSet : panels.component
+                shownAsset.node.type === 'COMPONENT_SET' ? panels.componentSet : panels.component
               }}
-              <span v-if="selectedAsset.variantCount > 0">
-                · {{ selectedAsset.variantCount }} variants</span
+              <span v-if="shownAsset.variantCount > 0">
+                · {{ shownAsset.variantCount }} variants</span
               >
             </p>
           </div>
@@ -540,7 +561,7 @@ async function insertSelectedAsset() {
               v-if="previewURL"
               data-test-id="asset-details-preview-image"
               :src="previewURL"
-              :alt="`${selectedAsset.name} preview`"
+              :alt="`${shownAsset.name} preview`"
               class="max-h-[120px] max-w-[210px] object-contain"
             />
             <div v-else class="text-center">
@@ -550,11 +571,11 @@ async function insertSelectedAsset() {
               />
               <component
                 v-else
-                :is="nodeIcon(selectedAsset.node)"
+                :is="nodeIcon(shownAsset.node)"
                 class="mx-auto size-8 text-component"
               />
               <p class="mt-2 max-w-44 truncate text-xs font-medium text-surface">
-                {{ selectedAsset.name }}
+                {{ shownAsset.name }}
               </p>
             </div>
           </div>
@@ -569,25 +590,25 @@ async function insertSelectedAsset() {
         </div>
 
         <div class="min-w-0 p-4">
-          <section v-if="selectedAsset.description" class="mb-4">
+          <section v-if="shownAsset.description" class="mb-4">
             <h3 class="text-[11px] font-medium tracking-wider text-muted uppercase">
               {{ panels.description }}
             </h3>
             <p data-test-id="asset-details-description" class="mt-1 text-xs leading-5 text-surface">
-              {{ selectedAsset.description }}
+              {{ shownAsset.description }}
             </p>
           </section>
 
-          <section v-if="selectedAsset.sourceLibraryKey" class="mb-4">
+          <section v-if="shownAsset.sourceLibraryKey" class="mb-4">
             <h3 class="text-[11px] font-medium tracking-wider text-muted uppercase">
               {{ panels.assetLibraryBadge }}
             </h3>
             <p data-test-id="asset-details-library" class="mt-1 break-all text-xs text-muted">
-              {{ selectedAsset.sourceLibraryKey }}
+              {{ shownAsset.sourceLibraryKey }}
             </p>
           </section>
 
-          <section v-if="selectedAsset.docsURL" class="mb-4">
+          <section v-if="shownAsset.docsURL" class="mb-4">
             <h3 class="text-[11px] font-medium tracking-wider text-muted uppercase">
               {{ panels.documentation }}
             </h3>
@@ -597,20 +618,20 @@ async function insertSelectedAsset() {
               size="xs"
               data-test-id="asset-details-docs"
               class="mt-1"
-              @click="selectedAsset.docsURL ? openExternalLink(selectedAsset.docsURL) : undefined"
+              @click="shownAsset.docsURL ? openExternalLink(shownAsset.docsURL) : undefined"
             >
               <icon-lucide-book-open class="size-3" />
               {{ panels.openDocs }}
             </AppButton>
           </section>
 
-          <section v-if="selectedAsset.variants.length > 0">
+          <section v-if="shownAsset.variants.length > 0">
             <h3 class="text-[11px] font-medium tracking-wider text-muted uppercase">
               {{ panels.properties }}
             </h3>
             <div class="mt-2 flex flex-col gap-2">
               <div
-                v-for="variant in selectedAsset.variants"
+                v-for="variant in shownAsset.variants"
                 :key="variant.name"
                 data-test-id="asset-details-property"
                 class="rounded border border-border bg-input/40 px-2 py-1.5"

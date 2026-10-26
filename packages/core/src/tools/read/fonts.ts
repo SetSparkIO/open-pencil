@@ -1,6 +1,7 @@
 import { uniq } from 'es-toolkit/array'
 import * as v from 'valibot'
 
+import { OpenPencilAPI } from '#core/openpencil-api'
 import { defineTool } from '#core/tools/schema'
 
 export const getFontStatus = defineTool({
@@ -11,8 +12,8 @@ export const getFontStatus = defineTool({
     'loaded, and affected nodes.',
   execution: { kind: 'sync', mutation: 'none' },
   exposure: { webmcp: false },
-  input: v.object({}),
-  execute: (figma) => figma.getFontStatus()
+  input: v.strictObject({}),
+  execute: (figma) => new OpenPencilAPI(figma).getFontStatus()
 })
 
 export const listFonts = defineTool({
@@ -20,7 +21,7 @@ export const listFonts = defineTool({
   description: 'List fonts used in the current page.',
   execution: { kind: 'sync', mutation: 'none' },
   exposure: { webmcp: false },
-  input: v.object({
+  input: v.strictObject({
     family: v.optional(v.pipe(v.string(), v.description('Filter by family name (substring)')))
   }),
   execute: (figma, args) => {
@@ -57,7 +58,7 @@ export const listAvailableFonts = defineTool({
     'which only reports families currently used in the page.',
   execution: { kind: 'async', mutation: 'none' },
   exposure: { webmcp: false },
-  input: v.object({
+  input: v.strictObject({
     family: v.optional(
       v.pipe(v.string(), v.description('Filter by family name (substring, case-insensitive)'))
     )

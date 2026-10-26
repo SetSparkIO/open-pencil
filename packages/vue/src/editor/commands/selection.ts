@@ -1,4 +1,5 @@
 import type { SceneNode } from '@open-pencil/scene-graph'
+import { readIcon } from '@open-pencil/scene-graph/icons'
 
 import type { EditorCommandMapOptions } from './context'
 import type { EditorCommand, EditorCommandId } from './types'
@@ -48,6 +49,38 @@ export function createSelectionCommands({
       },
       enabled: capabilities.canSelectAll,
       run: () => editor.selectInverse()
+    },
+    'selection.selectChildren': {
+      id: 'selection.selectChildren',
+      get label() {
+        return t.value.selectChildren
+      },
+      enabled: selection.hasSelection,
+      run: () => editor.selectChildren()
+    },
+    'selection.selectParent': {
+      id: 'selection.selectParent',
+      get label() {
+        return t.value.selectParent
+      },
+      enabled: selection.hasSelection,
+      run: () => editor.selectParent()
+    },
+    'selection.selectNextSibling': {
+      id: 'selection.selectNextSibling',
+      get label() {
+        return t.value.selectNextSibling
+      },
+      enabled: selection.hasSelection,
+      run: () => editor.selectNextSibling()
+    },
+    'selection.selectPreviousSibling': {
+      id: 'selection.selectPreviousSibling',
+      get label() {
+        return t.value.selectPreviousSibling
+      },
+      enabled: selection.hasSelection,
+      run: () => editor.selectPreviousSibling()
     },
     'selection.duplicate': {
       id: 'selection.duplicate',
@@ -123,6 +156,19 @@ export function createSelectionCommands({
       },
       enabled: capabilities.canDetachInstance,
       run: () => editor.detachInstance()
+    },
+    'selection.detachIcon': {
+      id: 'selection.detachIcon',
+      get label() {
+        return t.value.detachIcon
+      },
+      enabled: capabilities.canDetachIcon,
+      run: () => {
+        const icons = editor.getSelectedNodes().filter((node) => readIcon(node))
+        editor.undo.runBatch('Detach icon', () => {
+          for (const icon of icons) editor.detachIcon(icon.id)
+        })
+      }
     },
     'selection.goToMainComponent': {
       id: 'selection.goToMainComponent',

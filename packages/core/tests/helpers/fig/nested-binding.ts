@@ -1,10 +1,10 @@
-import type { SymbolData } from '@open-pencil/fig/instance-overrides'
+import { symbolOverridesOf } from '@open-pencil/fig/instance-overrides'
 import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
 
 import { expectDefined } from '../assert'
-import { CapturedFigRecords, readFixture } from './fixtures'
+import { capturedFigRecordsSchema, readFixture } from './fixtures'
 
-const fixture = readFixture('nested-binding-ownership-records.json', CapturedFigRecords)
+const fixture = readFixture('nested-binding-ownership-records.json', capturedFigRecordsSchema)
 
 /** Remove only the placed owner's declaration, retaining the saved inherited expression. */
 export function inheritedNestedBindingRecords(): NodeChange[] {
@@ -13,7 +13,7 @@ export function inheritedNestedBindingRecords(): NodeChange[] {
     changes.find((node) => node.guid?.sessionID === 293733 && node.guid.localID === 8),
     'captured owner'
   )
-  for (const override of (owner.symbolData as SymbolData).symbolOverrides ?? []) {
+  for (const override of symbolOverridesOf(owner)) {
     Reflect.deleteProperty(override, 'parameterConsumptionMap')
   }
   return changes

@@ -4,8 +4,9 @@ import {
   buildStyleOverrideTable,
   encodeVectorNetworkBlob,
   decodeVectorNetworkBlob,
-  type VectorNetwork
-} from '@open-pencil/core'
+  textPathStartSegment
+} from '@open-pencil/fig/node-change'
+import type { VectorNetwork } from '@open-pencil/scene-graph'
 
 import {
   lineNetwork,
@@ -135,5 +136,69 @@ describe('vertex stroke caps in the style override table', () => {
     expect(decoded.vertices[0].handleMirroring).toBe('ANGLE')
     expect(decoded.vertices[1].strokeCap).toBeUndefined()
     expect(decoded.vertices[1].handleMirroring).toBe('ANGLE')
+  })
+})
+
+describe('vertex corners in the style override table', () => {
+  test('a per-vertex corner radius and join round-trip', () => {
+    const network = vectorNetwork(
+      [
+        { ...vectorVertex(0, 0), cornerRadius: 8, strokeJoin: 'ROUND' },
+        vectorVertex(100, 0),
+        { ...vectorVertex(100, 100), cornerRadius: 4 }
+      ],
+      [vectorSegment(0, 1), vectorSegment(1, 2)]
+    )
+    const { table, styleToId } = buildStyleOverrideTable(network)
+    const decoded = decodeVectorNetworkBlob(encodeVectorNetworkBlob(network, styleToId), table)
+    expect(decoded.vertices.map((vertex) => vertex.cornerRadius)).toEqual([8, undefined, 4])
+    expect(decoded.vertices[0].strokeJoin).toBe('ROUND')
+  })
+
+  test('an explicit zero radius survives, so a rounded layer keeps that point sharp', () => {
+    const network = vectorNetwork(
+      [{ ...vectorVertex(0, 0), cornerRadius: 0 }, vectorVertex(100, 0), vectorVertex(100, 100)],
+      [vectorSegment(0, 1), vectorSegment(1, 2)]
+    )
+    const { table, styleToId } = buildStyleOverrideTable(network)
+    expect(table).toEqual([{ styleID: 1, cornerRadius: 0 }])
+    const decoded = decodeVectorNetworkBlob(encodeVectorNetworkBlob(network, styleToId), table)
+    expect(decoded.vertices.map((vertex) => vertex.cornerRadius)).toEqual([0, undefined, undefined])
+  })
+})
+
+describe('region style words', () => {
+  /** A one-region triangle blob whose region word is `word`. */
+  function regionBlob(word: number) {
+    const blob = encodeVectorNetworkBlob(triangleNetwork())
+    const view = new DataView(blob.buffer)
+    // Header 12 bytes, three 12-byte vertices and three 28-byte segments come before the region.
+    view.setUint32(12 + 3 * 12 + 3 * 28, word, true)
+    return blob
+  }
+
+  test('the winding rule is the low bit, under the region’s style ID', () => {
+    // Style 3 with even-odd winding, then with nonzero winding. Every styled region in the fixtures
+    // is nonzero, so the even-odd case follows the bit layout rather than a Figma file.
+    expect(decodeVectorNetworkBlob(regionBlob((3 << 1) | 0)).regions[0].windingRule).toBe('EVENODD')
+    expect(decodeVectorNetworkBlob(regionBlob((3 << 1) | 1)).regions[0].windingRule).toBe('NONZERO')
+  })
+})
+
+describe('the text path start segment', () => {
+  test('is the segment Figma marks with style word 0x1ffffff, else the first', () => {
+    const network = vectorNetwork(
+      [vectorVertex(0, 0), vectorVertex(100, 0), vectorVertex(100, 100)],
+      [vectorSegment(0, 1), vectorSegment(1, 2)]
+    )
+    const blob = encodeVectorNetworkBlob(network)
+    expect(textPathStartSegment(blob)).toBe(0)
+    // Header 12 bytes and three 12-byte vertices come before the 28-byte segments.
+    new DataView(blob.buffer).setUint32(12 + 3 * 12 + 28, 0x1ffffff, true)
+    expect(textPathStartSegment(blob)).toBe(1)
+    // The marker is a style word, so the network itself decodes unchanged.
+    expect(decodeVectorNetworkBlob(blob)).toEqual(
+      decodeVectorNetworkBlob(encodeVectorNetworkBlob(network))
+    )
   })
 })

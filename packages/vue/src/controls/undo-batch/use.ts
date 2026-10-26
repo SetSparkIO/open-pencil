@@ -1,7 +1,7 @@
 import { tryOnScopeDispose, useTimeoutFn } from '@vueuse/core'
 import { getCurrentInstance, onDeactivated } from 'vue'
 
-import type { UndoManager } from '@open-pencil/scene-graph'
+import type { UndoManager } from '@open-pencil/scene-graph/undo'
 
 const BATCH_IDLE_MS = 300
 
@@ -43,7 +43,12 @@ export function useUndoBatch(undo: UndoManager, beginInteractiveEdit?: () => () 
     scheduleFlush()
   }
 
-  tryOnScopeDispose(flush)
+  // Undo and redo commit the coalesced edit first, so they never step past it.
+  const stopSettling = undo.onBeforeHistory(flush)
+  tryOnScopeDispose(() => {
+    flush()
+    stopSettling()
+  })
   // These are applied property-list edits, not owned previews. Preserve the
   // normal unmount behavior; preview owners cancel unfinished interactions.
   if (getCurrentInstance()) onDeactivated(flush)

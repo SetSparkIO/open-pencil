@@ -10,8 +10,13 @@ export const toolMessageDefaults = {
   polygon: 'Polygon',
   star: 'Star',
   pen: 'Pen',
+  pencil: 'Pencil',
   text: 'Text',
-  hand: 'Hand'
+  sticky: 'Sticky note',
+  shape: 'Shape',
+  connector: 'Connector',
+  hand: 'Hand',
+  comment: 'Comment'
 } as const
 
 export const toolMessages = i18n('tools', toolMessageDefaults)

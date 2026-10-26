@@ -1,21 +1,18 @@
-import { beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
+import { beforeAll, expect, setDefaultTimeout, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
-import {
-  computeAllLayouts,
-  initCodec,
-  parseFigFile,
-  renderNodesToImage,
-  SkiaRenderer,
-  type SceneGraph,
-  type SceneNode
-} from '@open-pencil/core'
+import { SkiaRenderer } from '@open-pencil/core/canvas'
+import { parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { renderNodesToImage } from '@open-pencil/core/io/formats/raster'
+import { computeAllLayouts } from '@open-pencil/core/layout'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 
 import { initCanvasKit } from '#cli/headless'
 
 import { expectDefined } from '#tests/helpers/assert'
 import { repoPath } from '#tests/helpers/paths'
-import { HEAVY_TEST_TIMEOUT_MS } from '#tests/helpers/test-utils'
+import { heavy, HEAVY_TEST_TIMEOUT_MS } from '#tests/helpers/test-utils'
 
 import { expectRgbaPixels } from './helpers'
 
@@ -103,7 +100,7 @@ function maskYCenter(
   return (minY + maxY) / 2
 }
 
-describe('render cache regressions', () => {
+heavy('render cache regressions', () => {
   test('badge label is vertically centered in the pill', async () => {
     const surface = expectDefined(ck.MakeSurface(120, 60), 'badge surface')
     const renderer = new SkiaRenderer(ck, surface)
@@ -210,6 +207,26 @@ describe('render cache regressions', () => {
 
       renderPreview(renderer, 11)
       expect(renderer.profiler.stats.scenePictureMode).toBe('hit')
+    } finally {
+      surface.delete()
+    }
+  })
+
+  test('drop targeting and text editing reuse the cached scene', () => {
+    const surface = expectDefined(ck.MakeSurface(900, 700), 'preview surface')
+    const renderer = new SkiaRenderer(ck, surface)
+    renderer.viewportWidth = 900
+    renderer.viewportHeight = 700
+    renderer.dpr = 1
+    renderer.zoom = 0.75
+    renderer.pageId = graph.getPages()[0].id
+
+    try {
+      renderPreview(renderer, 20)
+      for (const overlays of [{ dropTargetId: movingNodeId }, { editingTextId: movingNodeId }]) {
+        renderer.render(graph, new Set(), overlays, 20)
+        expect(renderer.profiler.stats.scenePictureMode).toBe('hit')
+      }
     } finally {
       surface.delete()
     }

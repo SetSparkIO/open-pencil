@@ -1,4 +1,5 @@
 import type { createClipboardActions } from '#core/editor/clipboard'
+import type { CopyOptions } from '#core/editor/clipboard/copy'
 import type { createSelectionActions } from '#core/editor/selection'
 
 type ClipboardActions = ReturnType<typeof createClipboardActions>
@@ -8,13 +9,15 @@ export function createClipboardBridge(clipboard: ClipboardActions, selection: Se
   return {
     duplicateSelected: () => clipboard.duplicateSelected(selection.getSelectedNodes()),
     duplicateNode: clipboard.duplicateNode,
-    prepareCopy: () => clipboard.prepareCopy(selection.getSelectedNodes()),
+    prepareCopy: (options?: CopyOptions) =>
+      clipboard.prepareCopy(selection.getSelectedNodes(), options),
     pasteSnapshot: clipboard.pasteSnapshot,
     pasteFromHTML: clipboard.pasteFromHTML,
     deleteSelected: clipboard.deleteSelected,
     storeImage: clipboard.storeImage,
     placeFiles: clipboard.placeFiles,
     placeImageFiles: clipboard.placeImageFiles,
+    pasteSVG: clipboard.pasteSVG,
     loadFontsForNodes: clipboard.loadFontsForNodes,
     copySelectionAsText: clipboard.copySelectionAsText,
     copySelectionAsSVG: clipboard.copySelectionAsSVG,

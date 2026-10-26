@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
-import { computeAllLayouts } from '@open-pencil/core'
+import { computeAllLayouts } from '@open-pencil/core/layout'
+import { fontManager } from '@open-pencil/core/text'
 
-import { expectDefined, getNodeOrThrow } from '#tests/helpers/assert'
+import { expectDefined, expectFills, getNodeOrThrow } from '#tests/helpers/assert'
+import { repoPath } from '#tests/helpers/paths'
 import { getTool, setupToolTest, type ToolResult } from '#tests/helpers/tools'
 
 describe('set_fill', () => {
@@ -14,11 +16,8 @@ describe('set_fill', () => {
     const tool = getTool('set_fill')
     tool.execute(figma, { id: frame.id, color: '#ff0000' })
 
-    const fills = expectDefined(figma.getNodeById(frame.id), 'frame node').fills
-    expect(fills.length).toBe(1)
-    expect(fills[0].color.r).toBeCloseTo(1)
-    expect(fills[0].color.g).toBeCloseTo(0)
-    expect(fills[0].color.b).toBeCloseTo(0)
+    const fills = expectFills(expectDefined(figma.getNodeById(frame.id), 'frame node').fills)
+    expect(fills).toEqual([expect.objectContaining({ color: { r: 1, g: 0, b: 0 } })])
   })
 
   test('returns error for missing node', () => {
@@ -38,10 +37,9 @@ describe('set_stroke', () => {
     const tool = getTool('set_stroke')
     tool.execute(figma, { id: rect.id, color: '#0000ff', weight: 2 })
 
-    const strokes = expectDefined(figma.getNodeById(rect.id), 'rectangle node').strokes
-    expect(strokes.length).toBe(1)
-    expect(strokes[0].color.b).toBeCloseTo(1)
-    expect(strokes[0].weight).toBe(2)
+    const node = expectDefined(figma.getNodeById(rect.id), 'rectangle node')
+    expect(node.strokes).toEqual([expect.objectContaining({ color: { r: 0, g: 0, b: 1 } })])
+    expect(node.strokeWeight).toBe(2)
   })
 })
 
@@ -149,7 +147,8 @@ describe('set_layout', () => {
 
     const rawBefore = getNodeOrThrow(graph, frame.id)
     expect(rawBefore.layoutMode).toBe('NONE')
-    expect(rawBefore.primaryAxisSizing).toBe('FIXED')
+    // A new frame hugs along its main axis, as in Figma.
+    expect(rawBefore.primaryAxisSizing).toBe('HUG')
     expect(rawBefore.counterAxisSizing).toBe('FIXED')
 
     const tool = getTool('set_layout')
@@ -220,6 +219,31 @@ describe('set_constraints', () => {
 })
 
 describe('set_font_range', () => {
+  test('returns an empty or overlong range as an error and changes nothing', () => {
+    const { figma, graph } = setupToolTest()
+    const created = getTool('create_shape').execute(figma, {
+      type: 'TEXT',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 20
+    }) as ToolResult
+    const id = expectDefined(created.id, 'created node id')
+    getTool('set_text').execute(figma, { id, text: 'Hello' })
+    const setFontRange = getTool('set_font_range')
+
+    expect(setFontRange.execute(figma, { id, start: 2, end: 2, size: 18 })).toEqual({
+      error: "in setRangeFontSize: Empty range selected. 'end' must be greater than 'start'"
+    })
+    expect(setFontRange.execute(figma, { id, start: 0, end: 9, size: 18 })).toMatchObject({
+      error: expect.stringContaining('Range outside of available characters')
+    })
+    expect(setFontRange.execute(figma, { id, start: 2, end: 2 })).toEqual({
+      error: 'set_font_range needs at least one of family, size, style, variations, or color'
+    })
+    expect(getNodeOrThrow(graph, id).styleRuns).toEqual([])
+  })
+
   test('applies font style to text range and survives serialization', () => {
     const { figma, graph } = setupToolTest()
     const createText = getTool('create_shape')
@@ -279,5 +303,33 @@ describe('set_font_range', () => {
       expectDefined(expectDefined(colorRun, 'color style run').style.fills, 'color style fills')[0]
         ?.color.r
     ).toBeCloseTo(1)
+  })
+})
+
+describe('set_font', () => {
+  test('sets variable font axes, picking the nearest named style when none is given', async () => {
+    const family = 'Tool Variations'
+    await fontManager.markLoaded(
+      family,
+      'Regular',
+      await Bun.file(repoPath('tests/fixtures/fonts/InterVariable-Latin.ttf')).arrayBuffer()
+    )
+    const { figma } = setupToolTest()
+    const text = figma.createText()
+    text.characters = 'Hello'
+    const setFont = getTool('set_font')
+
+    expect(
+      setFont.execute(figma, { id: text.id, family, variations: { wght: 650 } })
+    ).toMatchObject({
+      fontName: { family, style: 'Bold', variationSettings: { wght: 650 } }
+    })
+    expect(
+      setFont.execute(figma, { id: text.id, style: 'Regular', variations: { wght: 450 } })
+    ).toMatchObject({ fontName: { style: 'Regular', variationSettings: { wght: 450 } } })
+    expect(setFont.execute(figma, { id: text.id, variations: { slnt: -10 } })).toEqual({
+      error:
+        'in setRangeFontName: "slnt" is not a valid variation setting. Valid settings are ["opsz","wght"].'
+    })
   })
 })

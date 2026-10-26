@@ -8,9 +8,13 @@
  * no shared references between source and copy.
  */
 
+import { geometryCommandCoordCount } from './geometry'
+import { cloneInstanceOverrideState } from './instances/overrides'
+import { createDefaultSourceMetadata } from './node-defaults'
 import type {
   ArcData,
   ComponentPropertyDefinition,
+  ConnectorEndpoint,
   Effect,
   DerivedTextGlyph,
   Fill,
@@ -20,10 +24,7 @@ import type {
   SceneNode,
   Stroke,
   StyleRun
-} from './'
-import { geometryCommandCoordCount } from './geometry'
-import { cloneInstanceOverrideState } from './instance-overrides'
-import { createDefaultSourceMetadata } from './node-defaults'
+} from './types'
 import { cloneVectorNetwork } from './vector-network'
 
 // --- Individual copy functions ---
@@ -56,7 +57,7 @@ export function copyEffect(e: Effect): Effect {
 }
 
 export function copyStyleRun(r: StyleRun): StyleRun {
-  return {
+  const copy: StyleRun = {
     ...r,
     style: {
       ...r.style,
@@ -70,6 +71,11 @@ export function copyStyleRun(r: StyleRun): StyleRun {
       fontFeatures: r.style.fontFeatures ? r.style.fontFeatures.map((v) => ({ ...v })) : undefined
     }
   }
+  if (r.style.hyperlink) copy.style.hyperlink = { ...r.style.hyperlink }
+  if (r.style.lineHeight) copy.style.lineHeight = { ...r.style.lineHeight }
+  if (r.style.letterSpacing) copy.style.letterSpacing = { ...r.style.letterSpacing }
+  if (r.style.boundVariables) copy.style.boundVariables = { ...r.style.boundVariables }
+  return copy
 }
 
 // --- Array copy functions ---
@@ -209,11 +215,21 @@ function copyPropertyDefs(
 
 /** Deep-copy path-text glyphs (fresh commandsBlob buffers). */
 export function copyDerivedGlyphs(glyphs: DerivedTextGlyph[] | null): DerivedTextGlyph[] | null {
-  return glyphs ? glyphs.map((g) => ({ ...g, commandsBlob: new Uint8Array(g.commandsBlob) })) : null
+  return glyphs
+    ? glyphs.map((g) => ({
+        ...g,
+        commandsBlob: new Uint8Array(g.commandsBlob),
+        ...(g.emojiCodePoints ? { emojiCodePoints: [...g.emojiCodePoints] } : {})
+      }))
+    : null
 }
 
 // --- Complex structure copy functions ---
 // These replace structuredClone for known types, avoiding its ~24× overhead.
+
+export function copyConnectorEndpoint(endpoint: ConnectorEndpoint): ConnectorEndpoint {
+  return { ...endpoint, position: { ...endpoint.position } }
+}
 
 function copyArcData(a: ArcData): ArcData {
   return { startingAngle: a.startingAngle, endingAngle: a.endingAngle, innerRadius: a.innerRadius }
@@ -229,6 +245,14 @@ function copyArcData(a: ArcData): ArcData {
  * add its copy behavior here or document why sharing is intentional.
  */
 export type NodeCloneMode = 'deep' | 'fig-import'
+
+/** A text's line height and letter spacing, copied so a clone never shares them. */
+function copyTextLengths(src: SceneNode): Pick<SceneNode, 'lineHeight' | 'letterSpacing'> {
+  return {
+    lineHeight: src.lineHeight && { ...src.lineHeight },
+    letterSpacing: { ...src.letterSpacing }
+  }
+}
 
 export function cloneNodeProps(
   src: SceneNode,
@@ -271,7 +295,9 @@ export function cloneNodeProps(
     source: componentId === null ? structuredClone(src.source) : createDefaultSourceMetadata(),
     dashPattern: copyOpt(src.dashPattern, (a) => [...a]),
     fontVariations: copyOpt(src.fontVariations, (a) => a.map((v) => ({ ...v }))),
+    ...copyTextLengths(src),
     fontFeatures: copyOpt(src.fontFeatures, (a) => a.map((v) => ({ ...v }))),
+    textParagraphs: copyOpt(src.textParagraphs, (a) => a.map((v) => ({ ...v }))),
     textDecorationFills: copyOpt(src.textDecorationFills, copyFills),
     fillGeometry: copyOpt(src.fillGeometry, copyGeometryPaths),
     strokeGeometry: copyOpt(src.strokeGeometry, copyGeometryPaths),
@@ -285,6 +311,8 @@ export function cloneNodeProps(
     pluginData: copySpread(src.pluginData),
     pluginRelaunchData: copySpread(src.pluginRelaunchData),
     exportSettings: copySpread(src.exportSettings),
+    // Generated instance descendants have no status of their own.
+    status: componentId === null ? src.status : null,
     componentPropertyValues: { ...src.componentPropertyValues },
     derivedLayout: src.derivedLayout ? { ...src.derivedLayout } : null,
     arcData: src.arcData ? copyArcData(src.arcData) : null,
@@ -295,6 +323,12 @@ export function cloneNodeProps(
       : null,
     textPathData: src.textPathData ? structuredClone(src.textPathData) : null,
     textPathBox: src.textPathBox ? { ...src.textPathBox } : null,
-    gridPosition: src.gridPosition ? { ...src.gridPosition } : null
+    gridPosition: src.gridPosition ? { ...src.gridPosition } : null,
+    targetAspectRatio: src.targetAspectRatio ? { ...src.targetAspectRatio } : null,
+    connectorStart: src.connectorStart ? copyConnectorEndpoint(src.connectorStart) : null,
+    connectorEnd: src.connectorEnd ? copyConnectorEndpoint(src.connectorEnd) : null,
+    connectorControlPoints: structuredClone(src.connectorControlPoints),
+    connectorCurveHandles: structuredClone(src.connectorCurveHandles),
+    connectorLabelPosition: src.connectorLabelPosition ? { ...src.connectorLabelPosition } : null
   }
 }

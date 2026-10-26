@@ -1,12 +1,15 @@
-import type { Editor, EditorState } from '@open-pencil/core/editor'
-import { prefetchFigmaSchema } from '@open-pencil/core/kiwi'
+import type { Editor, EditorState } from '@open-pencil/core'
+import { prefetchFigmaSchema } from '@open-pencil/core/clipboard'
 
 import { createDocumentViewportActions, downloadBlob } from '@/app/document/io/browser'
 import { createDOMOpenActions } from '@/app/document/io/dom'
 import { createOpenActions, createReloadActions } from '@/app/document/io/read'
-import { createDocumentSourceActions, createDocumentSourceState } from '@/app/document/io/source'
+import {
+  createDocumentSourceActions,
+  createDocumentSourceState
+} from '@/app/document/io/source/actions'
 import type { ViewportSize } from '@/app/document/io/types'
-import { createFileWatcher } from '@/app/document/io/watch'
+import { createFileWatcher } from '@/app/document/io/watch/watcher'
 import type { EditorPreparationController } from '@/app/editor/preparation/controller'
 
 type DocumentIOState = EditorState & {
@@ -29,10 +32,7 @@ export function createDocumentIOActions(
     state,
     getFilePath: sourceState.getFilePath,
     getFileHandle: sourceState.getFileHandle,
-    setSavedVersion: (version) => {
-      sourceState.setSavedVersion(version)
-      sourceActions.markDocumentSaved()
-    },
+    markDocumentSaved: () => sourceActions.markDocumentSaved(),
     preparationController
   })
   const { startWatchingFile, stopWatchingFile } = createFileWatcher({
@@ -43,10 +43,8 @@ export function createDocumentIOActions(
       void reloadFromDisk()
     }
   })
-  const { setViewportSize, fitCurrentPageToViewport } = createDocumentViewportActions(
-    editor,
-    viewportSize
-  )
+  const { setViewportSize, getViewportSize, fitCurrentPageToViewport } =
+    createDocumentViewportActions(editor, viewportSize)
   const sourceActions = createDocumentSourceActions({
     editor,
     state,
@@ -73,15 +71,12 @@ export function createDocumentIOActions(
   return {
     downloadBlob,
     setViewportSize,
+    getViewportSize,
     fitCurrentPageToViewport,
     getDocumentFilePath: sourceState.getFilePath,
     getSourceIdentity: sourceState.getSourceIdentity,
     getStorageBinding: sourceState.getStorageBinding,
-    /** Whether saving writes in place rather than asking for a location. */
-    hasWritableSource: () =>
-      !!sourceState.getFilePath() ||
-      !!sourceState.getFileHandle() ||
-      !!sourceState.getStorageBinding(),
+    hasWritableSource: sourceState.hasWritableSource,
     getRecoveryId: sourceActions.getRecoveryId,
     adoptRecoverySnapshot: sourceActions.adoptRecoverySnapshot,
     persistRecoveryNow: sourceActions.persistRecoveryNow,
@@ -90,12 +85,17 @@ export function createDocumentIOActions(
     setStorageDocumentSource: sourceActions.setStorageDocumentSource,
     setPlannedFilePath: sourceActions.setPlannedFilePath,
     saveFigFileToPath: sourceActions.saveFigFileToPath,
+    saveFigFileCopy: sourceActions.saveFigFileCopy,
+    saveFigFileToStorage: sourceActions.saveFigFileToStorage,
     startWatchingCurrentFile: sourceActions.startWatchingCurrentFile,
     disposeDocumentIO: sourceActions.disposeDocumentIO,
     openFigFile,
     openDOMFile,
     importDOMText,
     hasUnsavedChanges: sourceActions.hasUnsavedChanges,
+    markDocumentSaved: () => sourceActions.markDocumentSaved(),
+    markDocumentChanged: sourceActions.markDocumentChanged,
+    adoptChanges: sourceActions.adoptChanges,
     saveFigFile: sourceActions.saveFigFile,
     saveFigFileAs: sourceActions.saveFigFileAs
   }

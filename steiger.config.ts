@@ -35,12 +35,14 @@ export default defineConfig([
       'open-pencil/no-app-imports-components-or-views': 'error',
       'open-pencil/no-components-import-views': 'error',
       'open-pencil/no-views-imported-outside-entry': 'error',
+      'open-pencil/no-editor-imports-in-cloud-portal': 'error',
       'open-pencil/no-non-ui-imports-in-shared-ui': 'error',
       'open-pencil/no-app-imports-in-shared-ui': 'error',
       'open-pencil/no-property-panel-internals-outside-panel': 'error',
       'open-pencil/no-production-test-ids-in-shared-layers': 'error',
       'open-pencil/no-native-title-attributes-in-vue': 'error',
       'open-pencil/no-ui-imports-in-core': 'error',
+      'open-pencil/no-graph-builders-in-front-ends': 'error',
       'open-pencil/scripts-are-entrypoint-shims': 'error',
       'open-pencil/strict-tools-layout': 'error'
     }

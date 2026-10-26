@@ -1,9 +1,11 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 
-import { exportFigFile, initCodec, parseFigFile, SceneGraph } from '@open-pencil/core'
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
 import { effectiveFigmaRawNodeFields, parseFigBuffer } from '@open-pencil/fig'
-import { guidToString } from '@open-pencil/fig/node-change'
-import type { Vector } from '@open-pencil/scene-graph'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { guidToString } from '@open-pencil/kiwi/fig/guid'
+import { SceneGraph } from '@open-pencil/scene-graph'
+import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 /** The codec types only the fields it writes; raw passthrough metadata is read through these. */
 interface RawLayoutGrid {
@@ -224,6 +226,7 @@ describe('fig roundtrip source metadata', () => {
     text.source.fig.rawNodeFields.toggledOffOTFeatures = ['LIGA']
     text.source.fig.rawNodeFields.semanticWeight = 'BOLD'
     text.source.fig.rawNodeFields.semanticItalic = 'ITALIC'
+    text.source.fig.rawNodeFields.emojiImageSet = 'NOTO'
     text.source.fig.rawNodeFields.derivedTextData = {
       layoutSize: { x: 80, y: 20 },
       derivedLines: [{ directionality: 'LTR' }]
@@ -245,6 +248,7 @@ describe('fig roundtrip source metadata', () => {
     expect(exported?.toggledOffOTFeatures).toEqual(['LIGA'])
     expect(exported?.semanticWeight).toBe('BOLD')
     expect(exported?.semanticItalic).toBe('ITALIC')
+    expect(exported?.emojiImageSet).toBe('NOTO')
     expect(exported?.derivedTextData?.layoutSize).toEqual({ x: 80, y: 20 })
   })
 
@@ -492,15 +496,11 @@ describe('fig roundtrip source metadata', () => {
     const graph = new SceneGraph()
     graph.createNode('FRAME', graph.getPages()[0].id, { name: 'Card' })
     const saved = await exportFigFile(graph)
-    const savedGuidOf = (bytes: Uint8Array, name: string) => {
-      const nodeChange = decodeExport(bytes).nodeChanges.find((change) => change.name === name)
-      return nodeChange?.guid ? guidToString(nodeChange.guid) : undefined
-    }
 
     const reopened = await parseFigFile(saved.slice().buffer)
     const page = reopened.getPages()[0]
     const inserted = reopened.createNode('RECTANGLE', page.id, { name: 'Inserted' })
-    reopened.reorderChild(inserted.id, page.id, 0)
+    reopened.insertChildAt(inserted.id, page.id, 0)
     const resaved = await exportFigFile(reopened)
 
     const cardGuid = savedGuidOf(saved, 'Card')
@@ -510,4 +510,40 @@ describe('fig roundtrip source metadata', () => {
     expect(insertedGuid).toBeDefined()
     expect(insertedGuid).not.toBe(cardGuid)
   })
+
+  test('keeps the GUIDs of new layers across saves when a sibling is inserted before them', async () => {
+    const graph = new SceneGraph()
+    const page = graph.getPages()[0]
+    graph.createNode('FRAME', page.id, { name: 'Card' })
+    const cardGuid = savedGuidOf(await exportFigFile(graph), 'Card')
+
+    const inserted = graph.createNode('RECTANGLE', page.id, { name: 'Inserted' })
+    graph.insertChildAt(inserted.id, page.id, 0)
+    const resaved = await exportFigFile(graph)
+
+    expect(cardGuid).toBeDefined()
+    expect(savedGuidOf(resaved, 'Card')).toBe(cardGuid)
+    const insertedGuid = savedGuidOf(resaved, 'Inserted')
+    expect(insertedGuid).toBeDefined()
+    expect(insertedGuid).not.toBe(cardGuid)
+  })
+
+  test('gives an opened layer its saved GUID when a new layer has the same ID', async () => {
+    let next = 0
+    const graph = new SceneGraph(() => `9:${++next}`)
+    const page = graph.getPages()[0]
+    const created = graph.createNode('FRAME', page.id, { name: 'Created' })
+    const opened = graph.createNode('FRAME', page.id, { name: 'Opened' })
+    graph.updateNode(opened.id, { source: { ...opened.source, id: created.id } })
+    const saved = await exportFigFile(graph)
+
+    expect(savedGuidOf(saved, 'Opened')).toBe(created.id)
+    expect(savedGuidOf(saved, 'Created')).toBeDefined()
+    expect(savedGuidOf(saved, 'Created')).not.toBe(created.id)
+  })
 })
+
+function savedGuidOf(bytes: Uint8Array, name: string): string | undefined {
+  const nodeChange = decodeExport(bytes).nodeChanges.find((change) => change.name === name)
+  return nodeChange?.guid ? guidToString(nodeChange.guid) : undefined
+}

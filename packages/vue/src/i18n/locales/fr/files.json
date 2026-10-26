@@ -11,6 +11,7 @@
   "importing": "Importation…",
   "importToCanvas": "Importer dans le canevas",
   "newTab": "Nouvel onglet",
+  "home": "Accueil",
   "closeTab": "Fermer {name}",
   "clipboardImageUnavailableWeb": "Le design collé contient 1 image qui ne peut pas être chargée dans l’application web. Utilisez l’application de bureau pour l’inclure.",
   "clipboardImagesUnavailableWeb": "Le design collé contient {count} images qui ne peuvent pas être chargées dans l’application web. Utilisez l’application de bureau pour les inclure.",
@@ -26,5 +27,6 @@
   "noMatchingFiles": "Aucun fichier ne correspond à « {query} ».",
   "saveAsPrompt": "Enregistrer sous :",
   "browserFileAPINotSupported": "Votre navigateur ne prend pas en charge l’API de fichiers locaux. Les fichiers seront téléchargés au lieu d’être enregistrés sur place.",
-  "browserFileAPIDisabledInBrave": "Brave désactive l'API de fichiers locaux par défaut, les fichiers seront donc téléchargés au lieu d'être enregistrés sur place. Pour enregistrer sur place, activez brave://flags/#file-system-access-api et redémarrez Brave."
+  "browserFileAPIDisabledInBrave": "Brave désactive l'API de fichiers locaux par défaut, les fichiers seront donc téléchargés au lieu d'être enregistrés sur place. Pour enregistrer sur place, activez brave://flags/#file-system-access-api et redémarrez Brave.",
+  "newDesignIn": "Nouveau design dans {place}"
 }

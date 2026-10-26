@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import type { Fill } from '@open-pencil/scene-graph'
+import type { Fill, SceneNode } from '@open-pencil/scene-graph'
 import { colorToHexRaw } from '@open-pencil/scene-graph/color'
 import type { Color } from '@open-pencil/scene-graph/primitives'
+import { shaderOfPaint } from '@open-pencil/scene-graph/shaders'
+import { useColorBindingProvider } from '@open-pencil/vue/controls/binding-provider'
+import { useFillControls } from '@open-pencil/vue/controls/fill'
+import { useOkHCL } from '@open-pencil/vue/controls/okhcl'
+import { useI18n } from '@open-pencil/vue/i18n'
 import {
   BindableValueRoot,
-  useColorBindingProvider,
-  useFillControls,
-  useI18n,
-  useOkHCL
-} from '@open-pencil/vue'
-import type { BindableValueActions } from '@open-pencil/vue'
+  type BindableValueActions
+} from '@open-pencil/vue/primitives/BindableValue'
 
+import { useEditorStore } from '@/app/editor/active-store'
 import FillPicker from '@/components/fill-picker/FillPicker.vue'
+import PaintField from '@/components/inputs/PaintField.vue'
 import VariableBindingPicker from '@/components/properties/binding/VariableBindingPicker.vue'
 import {
   commitDiscretePropertyListChange,
-  useBlendModeOptions
+  useBlendModeGroups
 } from '@/components/properties/blend-mode/use'
 import { fillLabel } from '@/components/properties/fill-label'
 import PropertyItemRow from '@/components/properties/item-list/PropertyItemRow.vue'
@@ -25,8 +28,8 @@ import {
   commitPaintMutation,
   paintBindingTargets
 } from '@/components/properties/paint/binding'
+import { useGradientEditing } from '@/components/properties/paint/gradient-edit'
 import { createFillOkhclAdapter } from '@/components/properties/paint/okhcl'
-import PaintField from '@/components/properties/paint/PaintField.vue'
 import PaintValue from '@/components/properties/paint/PaintValue.vue'
 import PropertyListRoot from '@/components/properties/PropertyListRoot.vue'
 import { useSharedStylePicker } from '@/components/properties/shared-style/useSharedStylePicker'
@@ -36,10 +39,23 @@ import PanelSection from '@/components/ui/panel/PanelSection.vue'
 import AppSelect from '@/components/ui/select/AppSelect.vue'
 
 const fillCtx = useFillControls()
+const store = useEditorStore()
 const okhcl = useOkHCL()
+const gradients = useGradientEditing()
+
+/** Opening a paint's picker shows its gradient handles on the canvas; closing commits the edit. */
+function onPickerOpenChange(
+  nodeIds: readonly string[],
+  index: number,
+  open: boolean,
+  binding: BindableValueActions<Color>
+) {
+  gradients.setOpen(gradients.target(nodeIds, 'fills', index), open)
+  if (!open) commitPaintMutation(binding)
+}
 const colorProvider = useColorBindingProvider()
 const { panels, common } = useI18n()
-const blendModeOptions = useBlendModeOptions()
+const blendModeGroups = useBlendModeGroups()
 const {
   visible: stylesVisible,
   hasStyle,
@@ -47,6 +63,11 @@ const {
   options: styleOptions,
   update: updateStyle
 } = useSharedStylePicker('fill')
+
+/** The shader a fill of the layer the panel shows draws, if it draws one. */
+function fillShader(node: SceneNode | null, fill: Fill) {
+  return node ? shaderOfPaint(node, fill) : null
+}
 
 function displayFill(fill: Fill, resolvedColor: Color | undefined): Fill {
   return fill.type === 'SOLID' && resolvedColor ? { ...fill, color: resolvedColor } : fill
@@ -136,12 +157,20 @@ function updateSolidColor(
                 <FillPicker
                   :fill="displayFill(fill, binding.resolvedValue)"
                   :okhcl="createFillOkhclAdapter(okhcl, activeNode, index)"
+                  :shader="fillShader(activeNode, fill)"
+                  :layer-size="selectedNodeIds.length === 1 ? activeNode : null"
+                  :keep-open="gradients.pressesHandle"
+                  :active-stop="gradients.stop(gradients.target(selectedNodeIds, 'fills', index))"
+                  @update:active-stop="
+                    gradients.setStop(gradients.target(selectedNodeIds, 'fills', index), $event)
+                  "
                   @update="
                     updatePickerFill(binding.actions, flush, $event, (next) =>
                       actions.update(index, next)
                     )
                   "
-                  @open-change="!$event && commitPaintMutation(binding.actions)"
+                  @update-shader="store.setShaderPaint(selectedNodeIds, 'fills', index, $event)"
+                  @open-change="onPickerOpenChange(selectedNodeIds, index, $event, binding.actions)"
                   @cancel="cancelPaintMutation(binding.actions)"
                 />
               </template>
@@ -163,7 +192,7 @@ function updateSolidColor(
                   "
                 />
                 <span v-else class="min-w-0 flex-1 truncate font-mono text-xs text-surface">
-                  {{ fillLabel(fill) }}
+                  {{ fillLabel(fill, undefined, fillShader(activeNode, fill)) }}
                 </span>
               </template>
 
@@ -187,7 +216,7 @@ function updateSolidColor(
             <PanelFieldGroup :label="panels.blendMode">
               <AppSelect
                 :model-value="fill.blendMode ?? 'NORMAL'"
-                :options="blendModeOptions"
+                :groups="blendModeGroups"
                 :label="panels.blendMode"
                 data-property="fill-blend-mode"
                 @update:model-value="

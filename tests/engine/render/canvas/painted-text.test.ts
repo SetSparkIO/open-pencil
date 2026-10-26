@@ -1,13 +1,11 @@
 import { beforeAll, expect, test } from 'bun:test'
 
-import type { Paragraph } from 'canvaskit-wasm'
-
 import type { Fill } from '@open-pencil/scene-graph'
 import { SceneGraph } from '@open-pencil/scene-graph'
 
 import { initCanvasKit } from '#cli/headless'
 import { SkiaRenderer } from '#core/canvas/renderer'
-import { withTextParagraph } from '#core/canvas/text'
+import { withTextParagraph, type TextLayout } from '#core/canvas/text'
 import { fontManager } from '#core/text/fonts'
 
 import { expectDefined } from '#tests/helpers/assert'
@@ -15,10 +13,10 @@ import { repoPath } from '#tests/helpers/paths'
 
 const FONT_FAMILY = 'Painted text fixture'
 beforeAll(async () => {
-  for (const style of ['Regular', 'SemiBold']) {
-    const data = await Bun.file(repoPath(`public/Inter-${style}.ttf`)).arrayBuffer()
-    fontManager.markLoaded(FONT_FAMILY, style, data)
-  }
+  // Inter's variable file draws both styles, as the bundled Inter does.
+  const data = await Bun.file(repoPath('packages/core/assets/InterVariable.ttf')).arrayBuffer()
+  for (const style of ['Regular', 'SemiBold'])
+    await fontManager.markLoaded(FONT_FAMILY, style, data)
 })
 
 const solid: Fill = { type: 'SOLID', color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true }
@@ -43,7 +41,7 @@ test('mutable foreground paints never enter the paragraph cache, including on er
     width: 100,
     height: 100
   })
-  let borrowed: Paragraph | undefined
+  let borrowed: TextLayout | undefined
   try {
     await renderer.loadFonts()
     expect(() =>

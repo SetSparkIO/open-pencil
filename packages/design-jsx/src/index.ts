@@ -1,6 +1,8 @@
 export {
   Frame,
   Text,
+  Span,
+  Paragraph,
   Rectangle,
   Ellipse,
   Line,
@@ -17,13 +19,34 @@ export {
   Page,
   INTRINSIC_ELEMENTS
 } from './components'
+export {
+  Accordion,
+  Button,
+  Checkbox,
+  Collapsible,
+  NumberField,
+  Progress,
+  RadioGroup,
+  Slider,
+  Switch,
+  Tabs,
+  Textarea,
+  TextField,
+  Toggle,
+  ToggleGroup,
+  type RekaElement,
+  type RekaProps
+} from './behaviours/elements'
 
 export {
   type TreeNode,
   type BaseProps,
+  type EllipseProps,
   type ComponentProps,
   type InstanceProps,
   type TextProps,
+  type SpanProps,
+  type ParagraphProps,
   type StyleProps,
   type PaintProp,
   isTreeNode,
@@ -50,14 +73,17 @@ export {
   gradient,
   linearGradient,
   radialGradient,
+  shader,
   solid,
   type GradientPaintOptions,
   type PaintColor,
   type PaintStop,
+  type ShaderFill,
   type SolidPaintOptions
 } from './paints'
 
 export { defineVars, designVar, isVariable, type DesignVariable, type VarDef } from './vars'
+export { isLayerRef, ref, type LayerRef } from './refs'
 
 export { createElement } from './mini-react'
 
@@ -66,23 +92,28 @@ export type { ArtworkPlacement, DesignJSXServices, SVGSource } from './services'
 export type { RenderOptions } from './types'
 export {
   DESIGN_JSX_ELEMENTS,
+  elementPropsByName,
+  type DesignJSXElementDefinition
+} from './elements'
+export {
   DESIGN_JSX_HELPERS,
   DESIGN_JSX_PROPERTIES,
   DESIGN_JSX_SUPPORTED_PROPERTIES,
   DESIGN_JSX_SUPPORTED_PROPERTY_NAMES,
   DESIGN_JSX_PROPERTY_ALIASES,
+  DESIGN_JSX_PARAGRAPH_PROPERTY_NAMES,
+  DESIGN_JSX_SPAN_PROPERTY_NAMES,
   DESIGN_JSX_STYLE_KEYS,
+  DESIGN_JSX_TEXT_PARAGRAPH_PROPERTY_NAMES,
   type DesignJSXStyleKey,
   designJSXProp,
   designJSXPropertyNames,
-  type DesignJSXElementDefinition,
   type DesignJSXHelperDefinition,
   type DesignJSXPropertyDefinition
-} from './schema'
+} from './definitions'
 export {
   transformDesignJSXExpression,
   transformDesignJSXProgram,
-  type DesignJSXChunk,
   type DesignJSXProgram
 } from './transform'
 
@@ -94,7 +125,8 @@ export {
   selectionToJSXWithLayers,
   type DesignJSXElement,
   type DesignJSXWithLayers,
-  type JSXAttributeSource
+  type JSXAttributeSource,
+  type JSXExportOptions
 } from './export'
 export { parseJSXAttributes } from './attributes'
 export { jsxNodeFields, type JSXNodeFields } from './fields'

@@ -1,5 +1,17 @@
 {
   "toolOptions": "Opcje narzędzia {tool}",
   "removeGradientStop": "Usuń punkt gradientu",
-  "showUI": "Pokaż interfejs ({shortcut})"
+  "cornerRadius": "Promień",
+  "pointCount": "Liczba",
+  "starRatio": "Proporcja",
+  "arcStart": "Początek",
+  "arcSweep": "Zakres",
+  "arcRatio": "Proporcja",
+  "stickyPlaceholder": "Wpisz cokolwiek, @wspomnij kogoś",
+  "connectorLabelPlaceholder": "Dodaj tekst",
+  "showUI": "Pokaż interfejs ({shortcut})",
+  "previewing": "Podgląd",
+  "resetPreview": "Resetuj",
+  "leavePreview": "Zakończ podgląd ({shortcut})",
+  "startPreview": "Podgląd ({shortcut})"
 }

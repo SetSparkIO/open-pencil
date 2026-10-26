@@ -1,88 +1,57 @@
-import { fetchIconifyCollection, searchIconify } from './api'
-import { buildIconData } from './svg'
-import type { IconData, IconSearchResult } from './types'
+import { MATERIAL_SYMBOLS_PREFIXES } from './material-symbols/font'
+import { createMaterialSymbolsProvider } from './material-symbols/provider'
+import { createIconifyProvider, type IconProvider } from './provider'
+import { createIconSetsProvider, type IconSetSource } from './sets'
 
-export type { IconData, IconPath, IconSearchResult } from './types'
+export {
+  createIconifyProvider,
+  parseIconName,
+  type IconProvider,
+  type IconSearchOptions
+} from './provider'
+export {
+  detachIcon,
+  drawIcon,
+  iconColor,
+  placeIcon,
+  recolorIcon,
+  swapIcon,
+  type PlaceIconOptions
+} from './render'
+export type { IconCollection, IconData, IconOption, IconPath, IconSearchResult } from './types'
+export { createMaterialSymbolsProvider } from './material-symbols/provider'
+export { MATERIAL_SYMBOLS_PREFIXES } from './material-symbols/font'
+export { createIconSetsProvider, type IconSetSource, type IconSetsOptions } from './sets'
+export {
+  createSFSymbolsProvider,
+  SF_SYMBOLS_PREFIX,
+  type SFSymbolsHost
+} from './sf-symbols/provider'
 
-const iconCache = new Map<string, IconData>()
+/** Iconify's icons, every set as Iconify serves it. */
+export const iconify: IconProvider = createIconifyProvider()
 
-export function clearIconCache(): void {
-  iconCache.clear()
-}
+/** Iconify's copies of Material Symbols: one fixed weight each, without the fonts' axes. */
+const ICONIFY_MATERIAL_SYMBOLS = ['material-symbols', 'material-symbols-light']
 
-function parseIconName(name: string): { prefix: string; iconName: string } {
-  const colonIdx = name.indexOf(':')
-  if (colonIdx === -1) {
-    throw new Error(
-      `Invalid icon name "${name}". Use prefix:name format (e.g. lucide:heart, mdi:home)`
-    )
-  }
-  return { prefix: name.slice(0, colonIdx), iconName: name.slice(colonIdx + 1) }
-}
-
-export async function fetchIcon(name: string, size = 24): Promise<IconData> {
-  const results = await fetchIcons([name], size)
-  const result = results.get(name)
-  if (!result)
-    throw new Error(`Icon "${name}" not found. Check the name at https://icon-sets.iconify.design/`)
-  return result
-}
-
-export async function fetchIcons(names: string[], size = 24): Promise<Map<string, IconData>> {
-  const results = new Map<string, IconData>()
-  const toFetch = new Map<string, string[]>()
-
-  for (const name of names) {
-    const cacheKey = `${name}@${size}`
-    const cached = iconCache.get(cacheKey)
-    if (cached) {
-      results.set(name, cached)
-      continue
-    }
-    const { prefix, iconName } = parseIconName(name)
-    const group = toFetch.get(prefix) ?? []
-    group.push(iconName)
-    toFetch.set(prefix, group)
-  }
-
-  const fetches = [...toFetch.entries()].map(async ([prefix, iconNames]) => {
-    const data = await fetchIconifyCollection(prefix, iconNames)
-    const defaultW = data.width ?? 24
-    const defaultH = data.height ?? 24
-
-    for (const iconName of iconNames) {
-      const fullName = `${prefix}:${iconName}`
-      let entry = data.icons[iconName]
-      if (!entry) {
-        const alias = data.aliases?.[iconName]
-        if (alias) entry = data.icons[alias.parent]
-      }
-      if (!entry) continue
-      const iconData = buildIconData(entry, prefix, iconName, defaultW, defaultH, size)
-      iconCache.set(`${fullName}@${size}`, iconData)
-      results.set(fullName, iconData)
-    }
+/**
+ * Icons from Iconify, with Material Symbols drawn from Google's variable fonts at any of their
+ * axes in place of Iconify's copies. `fetcher` reaches Google, as a host's web fonts do; `sources`
+ * adds sets only some hosts draw, such as SF Symbols on a Mac.
+ */
+export function createIconProvider(
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+  sources: readonly IconSetSource[] = []
+): IconProvider {
+  return createIconSetsProvider({
+    sources: [
+      { prefixes: MATERIAL_SYMBOLS_PREFIXES, provider: createMaterialSymbolsProvider(fetcher) },
+      ...sources
+    ],
+    fallback: iconify,
+    replaced: ICONIFY_MATERIAL_SYMBOLS
   })
-
-  await Promise.all(fetches)
-  return results
 }
 
-export { searchIconify as searchIcons }
-
-export async function searchIconsBatch(
-  queries: string[],
-  options?: {
-    limit?: number
-    prefix?: string
-  }
-): Promise<Map<string, IconSearchResult>> {
-  const results = new Map<string, IconSearchResult>()
-  await Promise.all(
-    queries.map(async (query) => {
-      const result = await searchIconify(query, options)
-      results.set(query, result)
-    })
-  )
-  return results
-}
+/** The icons hosts use unless they pass a provider of their own. */
+export const defaultIcons: IconProvider = createIconProvider()

@@ -1,5 +1,7 @@
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { styleRunReferences } from '@open-pencil/scene-graph/text'
 
+import { clipboardPlacement, type ClipboardPlacement } from './placement'
 import { captureClipboardVariables, type ClipboardVariables } from './variables'
 
 export type ClipboardNodeTree = SceneNode & { children?: ClipboardNodeTree[] }
@@ -10,7 +12,11 @@ export interface ClipboardSnapshot {
   styleDefinitions: SceneNode[]
   variableDependencies: ClipboardVariables
   nodes: ClipboardNodeTree[]
+  /** Where the copied layers sat on the canvas when they were copied. */
+  placement: ClipboardPlacement
   images: Map<string, Uint8Array>
+  /** Written by Copy properties: Paste skips it and Paste properties reads it, as in Figma. */
+  properties?: boolean
 }
 
 function referencedStyleIds(nodes: SceneNode[]): Set<string> {
@@ -21,7 +27,8 @@ function referencedStyleIds(nodes: SceneNode[]): Set<string> {
       node.strokeStyleId,
       node.textStyleId,
       node.effectStyleId,
-      node.gridStyleId
+      node.gridStyleId,
+      ...styleRunReferences(node.styleRuns).styles
     ]) {
       if (id) ids.add(id)
     }
@@ -72,6 +79,7 @@ export function captureClipboardSnapshot(
     styleDefinitions,
     variableDependencies: captureClipboardVariables(graph, capturedNodes),
     nodes,
+    placement: clipboardPlacement(graph, roots),
     images
   }
 }

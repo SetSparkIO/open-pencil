@@ -1,16 +1,37 @@
 import { jsx, type SyntaxNode } from '@open-pencil/emit'
 import type { SceneGraph } from '@open-pencil/scene-graph'
+import type { ShaderComponent, ShaderPreset } from '@open-pencil/scene-graph/shaders'
 
 import type { DesignDocument, DesignElement, DesignNode } from '../types'
+import { shaderEffectAttributes } from './components/shaders'
+import { SHADER_UTILITIES } from './components/styling'
 import { mergeClassNames, serializeTailwindClasses } from './html'
-import { sceneNodeToDesignDocument } from './projection'
+import { sceneNodeToDesignDocument, type SceneGraphToDesignOptions } from './projection'
+
+/** Engine services the projection takes, such as drawing vector layers as SVG. */
+type ProjectionServices = Pick<SceneGraphToDesignOptions, 'vectorElement'>
 
 /** HTML attribute names that JSX spells differently. */
-const JSX_ATTRIBUTE_NAMES: Record<string, string> = { class: 'className', for: 'htmlFor' }
+const JSX_ATTRIBUTE_NAMES: Record<string, string> = {
+  class: 'className',
+  for: 'htmlFor',
+  'xlink:href': 'xlinkHref'
+}
 
-/** Scene text layers become paragraphs; Tailwind's preflight removes their margins. */
+/** React spells SVG's dashed attributes in camel case, such as `fillRule`; data and ARIA stay. */
+function jsxAttributeName(name: string): string {
+  const named = JSX_ATTRIBUTE_NAMES[name]
+  if (named) return named
+  if (name.startsWith('data-') || name.startsWith('aria-')) return name
+  return name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase())
+}
+
+/**
+ * Scene text layers become paragraphs, whose margins Tailwind's preflight removes; text laid
+ * out in blocks keeps the `<div>` that holds them.
+ */
 function tagName(node: DesignElement): string {
-  return node.sourceSceneNode?.type === 'TEXT' ? 'p' : node.tagName
+  return node.sourceSceneNode?.type === 'TEXT' && node.tagName === 'span' ? 'p' : node.tagName
 }
 
 function attributes(node: DesignElement, themeVariables: readonly string[]): SyntaxNode[] {
@@ -22,9 +43,40 @@ function attributes(node: DesignElement, themeVariables: readonly string[]): Syn
     ['className', mergeClassNames(className, serializeTailwindClasses(node, themeVariables))]
   ]
   return entries.flatMap(([key, value]) =>
-    value === undefined
-      ? []
-      : [jsx.attribute(JSX_ATTRIBUTE_NAMES[key] ?? key, jsx.stringValue(value))]
+    value === undefined ? [] : [jsx.attribute(jsxAttributeName(key), jsx.stringValue(value))]
+  )
+}
+
+/**
+ * A layer's shader as the `shaders` library's `<Shader>`, each effect a child with the preset's
+ * props, with telemetry off as every OpenPencil export has it.
+ */
+function shaderElement(preset: ShaderPreset, depth: number): SyntaxNode {
+  const effect =
+    (at: number) =>
+    (component: ShaderComponent): SyntaxNode =>
+      jsx.element(
+        component.type,
+        shaderEffectAttributes(component),
+        (component.children ?? []).map(effect(at + 1)),
+        at
+      )
+  return jsx.element(
+    'Shader',
+    [
+      jsx.attribute('className', jsx.stringValue(SHADER_UTILITIES)),
+      jsx.attribute('disableTelemetry', null)
+    ],
+    preset.components.map(effect(depth + 1)),
+    depth
+  )
+}
+
+/** How many elements a shader prints, which no layer produced. */
+function shaderElementCount(components: readonly ShaderComponent[] = []): number {
+  return components.reduce(
+    (count, component) => count + 1 + shaderElementCount(component.children),
+    0
   )
 }
 
@@ -33,7 +85,10 @@ function element(
   depth: number,
   themeVariables: readonly string[]
 ): SyntaxNode {
-  const children = node.children.map((child) => jsxNode(child, depth + 1, themeVariables))
+  const children = [
+    ...(node.shader ? [shaderElement(node.shader.preset, depth + 1)] : []),
+    ...node.children.map((child) => jsxNode(child, depth + 1, themeVariables))
+  ]
   // A lone text child stays on the element's line.
   const inline = children.length === 1 && node.children[0]?.type === 'text'
   return jsx.element(tagName(node), attributes(node, themeVariables), children, depth, inline)
@@ -52,8 +107,12 @@ export function designDocumentToTailwindJSX(document: DesignDocument): string {
 }
 
 /** Tailwind JSX for scene nodes, separated by blank lines. */
-export function sceneNodesToTailwindJSX(graph: SceneGraph, nodeIds: string[]): string {
-  return sceneNodesToTailwindJSXWithLayers(graph, nodeIds).code
+export function sceneNodesToTailwindJSX(
+  graph: SceneGraph,
+  nodeIds: string[],
+  options: ProjectionServices = {}
+): string {
+  return sceneNodesToTailwindJSXWithLayers(graph, nodeIds, options).code
 }
 
 /** Tailwind JSX with the layer behind each element, in the order elements open. */
@@ -66,17 +125,25 @@ export interface TailwindJSXWithLayers {
 function collectLayerIds(node: DesignNode, layerIds: Array<string | null>): void {
   if (node.type === 'text') return
   layerIds.push(node.sourceSceneNodeId ?? node.sourceSceneNode?.id ?? null)
+  if (node.shader) {
+    const count = 1 + shaderElementCount(node.shader.preset.components)
+    for (let index = 0; index < count; index++) layerIds.push(null)
+  }
   for (const child of node.children) collectLayerIds(child, layerIds)
 }
 
 export function sceneNodesToTailwindJSXWithLayers(
   graph: SceneGraph,
-  nodeIds: string[]
+  nodeIds: string[],
+  { vectorElement }: ProjectionServices = {}
 ): TailwindJSXWithLayers {
   const layerIds: Array<string | null> = []
   const blocks: string[] = []
   for (const id of nodeIds) {
-    const document = sceneNodeToDesignDocument(graph, id, { includeSourceIds: false })
+    const document = sceneNodeToDesignDocument(graph, id, {
+      includeSourceIds: false,
+      vectorElement
+    })
     const code = designDocumentToTailwindJSX(document)
     if (!code) continue
     blocks.push(code)

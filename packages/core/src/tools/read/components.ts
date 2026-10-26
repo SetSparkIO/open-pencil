@@ -1,8 +1,7 @@
 import * as v from 'valibot'
 
 import { getComponentCatalog } from '#core/tools/component-catalog'
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 interface DocumentComponentResult {
   id: string
@@ -30,7 +29,7 @@ export const getComponents = defineTool({
   description:
     'List reusable components from the document and enabled component libraries, optionally filtered by name.',
   execution: { kind: 'async', mutation: 'none' },
-  input: v.object({
+  input: v.strictObject({
     name: v.optional(
       v.pipe(v.string(), v.description('Filter by name (case-insensitive substring)'))
     ),

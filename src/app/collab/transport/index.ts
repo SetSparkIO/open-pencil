@@ -32,4 +32,4 @@ export const joinCollabRoom: JoinCollabRoom = (roomId) => {
   return joinRelayCollabRoom(roomId, { url })
 }
 
-export type { CollabRoomTransport, JoinCollabRoom } from './types'
+export type { CollabActionReceiver, CollabRoomTransport, JoinCollabRoom } from './types'

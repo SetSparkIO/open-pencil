@@ -1,7 +1,11 @@
 import { shallowReactive } from 'vue'
 
-import type { EditorState, EditorViewState } from '@open-pencil/core/editor'
-import { copyEditorViewState, pickEditorViewState } from '@open-pencil/core/editor'
+import {
+  type EditorState,
+  type EditorViewState,
+  copyEditorViewState,
+  pickEditorViewState
+} from '@open-pencil/core'
 
 export interface CanvasPaneState extends EditorViewState {
   id: string
@@ -29,6 +33,7 @@ export function cloneCanvasPaneState(id: string, source: CanvasPaneState): Canva
     id,
     selectedIds: new Set<string>(),
     hoveredNodeId: null,
+    transforming: false,
     measurementMode: 'off',
     editingTextId: null,
     marquee: null,
@@ -38,12 +43,15 @@ export function cloneCanvasPaneState(id: string, source: CanvasPaneState): Canva
     dropTargetId: null,
     layoutInsertIndicator: null,
     autoLayoutHover: null,
+    shapeHandleHover: null,
     penState: null,
     penCursorX: null,
     penCursorY: null,
     nodeEditState: null,
     cursorCanvasX: null,
     cursorCanvasY: null,
+    // A new canvas edits; preview belongs to the canvas that started it.
+    play: null,
     viewportWidth: source.viewportWidth,
     viewportHeight: source.viewportHeight
   })

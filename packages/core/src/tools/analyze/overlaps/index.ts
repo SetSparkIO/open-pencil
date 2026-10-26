@@ -4,8 +4,7 @@ import * as v from 'valibot'
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 
 import type { FigmaAPI } from '#core/figma-api'
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 import {
   buildParentOverflowResult,
@@ -336,7 +335,7 @@ export const analyzeOverlaps = defineTool({
     'Detect visual overlaps and layout overflows across the current page. Useful for finding content that covers footers, text that bleeds outside frames, and accidental sibling overlaps.',
   execution: { kind: 'sync', mutation: 'none' },
   exposure: { webmcp: false },
-  input: v.object({
+  input: v.strictObject({
     scope: v.optional(
       v.pipe(
         v.picklist(['all', 'same-parent', 'cross-parent', 'top-level', 'inside-parent']),

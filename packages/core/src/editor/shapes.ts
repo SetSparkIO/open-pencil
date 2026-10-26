@@ -1,39 +1,34 @@
-import type { Fill, NodeType, SceneNode } from '@open-pencil/scene-graph'
-
-import {
-  BLACK,
-  DEFAULT_FRAME_FILL,
-  DEFAULT_SHAPE_FILL,
-  SECTION_DEFAULT_FILL,
-  SECTION_DEFAULT_STROKE
-} from '#core/constants'
+import type { NodeType, SceneNode } from '@open-pencil/scene-graph'
+import { createShapeWithText } from '@open-pencil/scene-graph/generated'
 
 import { prepareSlotEdits } from './components/slots'
+import { restoreSubtree, snapshotSubtree } from './history/subtree'
 import { adoptCoveredLayers } from './shapes/adopt'
+import { newLayerDefaults } from './shapes/defaults'
 import { createFramePresetActions } from './shapes/frame-presets'
-import { createPenActions } from './shapes/pen'
+import { createPenActions, type UpdateNodeWithUndo } from './shapes/pen'
+import { createPencilActions } from './shapes/pencil'
+import { defaultNodeName, nextNumberedName } from './structure/rename'
 import type { EditorContext } from './types'
 export type { PenDragOptions } from './shapes/pen'
 
-const BLACK_FILL: Fill = {
-  type: 'SOLID',
-  color: BLACK,
-  opacity: 1,
-  visible: true
-}
+/** Layers Figma numbers when drawn, as "Rectangle 1"; others keep their type's name. */
+const NUMBERED_WHEN_DRAWN: ReadonlySet<NodeType> = new Set([
+  'FRAME',
+  'SECTION',
+  'RECTANGLE',
+  'ELLIPSE',
+  'LINE',
+  'POLYGON',
+  'STAR'
+])
 
-const DEFAULT_FILLS: Record<string, Fill> = {
-  FRAME: DEFAULT_FRAME_FILL,
-  SECTION: SECTION_DEFAULT_FILL,
-  RECTANGLE: DEFAULT_SHAPE_FILL,
-  ELLIPSE: DEFAULT_SHAPE_FILL,
-  POLYGON: DEFAULT_SHAPE_FILL,
-  STAR: DEFAULT_SHAPE_FILL,
-  LINE: BLACK_FILL,
-  TEXT: BLACK_FILL
-}
+export function createShapeActions(ctx: EditorContext, updateNodeWithUndo: UpdateNodeWithUndo) {
+  function drawnLayerName(type: NodeType, parentId: string): string {
+    const base = defaultNodeName(type)
+    return NUMBERED_WHEN_DRAWN.has(type) ? nextNumberedName(ctx.graph, parentId, base) : base
+  }
 
-export function createShapeActions(ctx: EditorContext) {
   function createShape(
     type: NodeType,
     x: number,
@@ -43,40 +38,39 @@ export function createShapeActions(ctx: EditorContext) {
     parentId?: string,
     name?: string
   ): string {
-    const fill = DEFAULT_FILLS[type] ?? DEFAULT_FILLS.RECTANGLE
     const pid = parentId ?? ctx.state.currentPageId
     // Inside an instance only a slot takes new layers, and the instance claims it first.
     if (!prepareSlotEdits(ctx, [pid])) {
       throw new Error('Cannot add a layer to the locked part of an instance')
     }
     const overrides: Partial<SceneNode> = {
+      ...newLayerDefaults(type, ctx.state.theme),
       x,
       y,
       width: w,
       height: h,
-      fills: [{ ...fill }],
-      ...(name ? { name } : {})
+      name: name ?? drawnLayerName(type, pid)
     }
-    if (type === 'SECTION') {
-      overrides.strokes = [{ ...SECTION_DEFAULT_STROKE }]
-      overrides.cornerRadius = 5
-    }
-    if (type === 'POLYGON') {
-      overrides.pointCount = 3
-    }
-    if (type === 'STAR') {
-      overrides.pointCount = 5
-      overrides.starInnerRadius = 0.38
-    }
-    const node = ctx.graph.createNode(type, pid, overrides)
+    const node =
+      type === 'SHAPE_WITH_TEXT'
+        ? createShapeWithText(ctx.graph, pid, {
+            ...overrides,
+            shapeWithTextType: ctx.state.shapeWithTextKind
+          })
+        : ctx.graph.createNode(type, pid, overrides)
     const id = node.id
-    const snapshot = { ...node }
+    // Callers finish the layer after this returns (the pen writes its path, fills and strokes),
+    // so redo restores the layer as it was when undone, not as first created. A shape with text
+    // brings its label, so the layer is kept with its sublayers.
+    let snapshots = snapshotSubtree(ctx.graph, id)
     ctx.undo.push({
       label: `Create ${type.toLowerCase()}`,
       forward: () => {
-        ctx.graph.createNode(snapshot.type, pid, snapshot)
+        const snapshot = snapshots.get(id)
+        if (snapshot) restoreSubtree(ctx.graph, snapshot, pid, snapshots)
       },
       inverse: () => {
+        if (ctx.graph.getNode(id)) snapshots = snapshotSubtree(ctx.graph, id)
         ctx.graph.deleteNode(id)
         const next = new Set(ctx.state.selectedIds)
         next.delete(id)
@@ -86,7 +80,8 @@ export function createShapeActions(ctx: EditorContext) {
     return id
   }
 
-  const penActions = createPenActions(ctx, createShape)
+  const penActions = createPenActions(ctx, createShape, updateNodeWithUndo)
+  const pencilActions = createPencilActions(ctx, createShape)
   const framePresetActions = createFramePresetActions(ctx, createShape)
 
   function setTool(tool: typeof ctx.state.activeTool) {
@@ -96,6 +91,7 @@ export function createShapeActions(ctx: EditorContext) {
   return {
     createShape,
     ...penActions,
+    ...pencilActions,
     ...framePresetActions,
     adoptCoveredLayers: (containerId: string) => adoptCoveredLayers(ctx, containerId),
     setTool

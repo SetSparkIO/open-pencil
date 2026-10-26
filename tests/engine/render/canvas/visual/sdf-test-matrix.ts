@@ -149,9 +149,9 @@ async function main() {
   const fontProvider = ck.TypefaceFontProvider.Make()
   fontManager.attachProvider(ck, fontProvider)
 
-  const fontPath = join(process.cwd(), 'public/Inter-SemiBold.ttf')
+  const fontPath = join(process.cwd(), 'packages/core/assets/Inter-SemiBold.ttf')
   const fontData = await readFile(fontPath)
-  fontManager.markLoaded(
+  await fontManager.markLoaded(
     'Inter',
     'SemiBold',
     fontData.buffer.slice(fontData.byteOffset, fontData.byteOffset + fontData.byteLength)

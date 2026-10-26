@@ -11,12 +11,22 @@ import {
   type Node as YogaNode
 } from 'yoga-layout'
 
-import { resolveNodeLayoutDirection } from '@open-pencil/scene-graph/text-direction'
+import { resolveNodeLayoutDirection } from '@open-pencil/scene-graph/text/direction'
 
 import { applyYogaLayout } from './layout/apply'
-import { usesDetachedDerivedLayout } from './layout/derived'
+import {
+  asFlatLeaf,
+  asLaidOutIn,
+  fillKeepsSizeInHuggingParent,
+  heldHugAxis,
+  ownAxisSizing,
+  setCrossAxisSizing,
+  setMainAxisSizing
+} from './layout/axis-sizing'
+import { keepsSavedLayout, usesDetachedDerivedLayout } from './layout/derived'
 import { applyEffectiveGeneratedTextLayout } from './layout/effective-generated-text'
 import { buildGridTree, createGridChildNode } from './layout/grid'
+import { sizeAutoResizingText } from './layout/text-auto-resize'
 export {
   estimateTextSize,
   getTextMeasurer,
@@ -24,11 +34,16 @@ export {
   setTextMeasurer,
   type TextMeasurer
 } from './layout/text-measurement'
-import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import type { LayoutSizing, SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { connectorSublayers, layoutConnector } from '@open-pencil/scene-graph/connectors'
+import { isGeneratedFrame } from '@open-pencil/scene-graph/generated'
+import { layoutSizing } from '@open-pencil/scene-graph/layout'
 
-import { estimateTextSize, getTextMeasurer } from './layout/text-measurement'
+import { fitShapeWithTextFrame } from './layout/shape-with-text'
+import { estimateTextSize, getTextMeasurer, measureTextForLayout } from './layout/text-measurement'
 import {
   applyMinMaxConstraints,
+  applyLockedAspectRatio,
   configureAbsoluteChild,
   configureNonTextLeaf,
   createYogaNode,
@@ -36,7 +51,8 @@ import {
   mapAlign,
   mapAlignSelf,
   mapGridTrack,
-  mapJustify
+  mapJustify,
+  parentStretchedAxis
 } from './layout/yoga-helpers'
 
 export function computeLayout(graph: SceneGraph, frameId: string): void {
@@ -46,6 +62,8 @@ export function computeLayout(graph: SceneGraph, frameId: string): void {
 function computeLayoutInternal(graph: SceneGraph, frameId: string): void {
   const frame = graph.getNode(frameId)
   if (!frame || frame.layoutMode === 'NONE') return
+  // A shape with text takes its size from its label before laying the label out in it.
+  fitShapeWithTextFrame(graph, frame)
 
   const rootDirection = resolveComputedLayoutDirection(graph, frame)
   const yogaDirection = rootDirection === 'RTL' ? Direction.RTL : Direction.LTR
@@ -74,7 +92,52 @@ export function computeAllLayouts(graph: SceneGraph, scopeId?: string): void {
     if (applyEffectiveGeneratedTextLayout(graph, rootId)) {
       computeLayoutsBottomUp(graph, rootId, new Set())
     }
+    routeUnroutedConnectors(graph, rootId)
   })
+}
+
+/**
+ * Routes each connector that has no route yet, as one read from a file that saved none, once its
+ * label is measured, as FigJam routes such a connector when it opens. A saved route is kept.
+ */
+export function routeUnroutedConnectors(graph: SceneGraph, rootId: string): void {
+  for (const { node } of graph.flattenTree(rootId)) {
+    if (node.type !== 'CONNECTOR') continue
+    const line = connectorSublayers(graph, node)?.line
+    if (!line || (line.vectorNetwork?.vertices.length ?? 0) > 0) continue
+    sizeAutoResizingText(graph, node.id)
+    layoutConnector(graph, node)
+  }
+}
+
+/**
+ * Gives content an author wrote, such as design JSX, HTML, or a `.pen` file, the sizes and
+ * positions its layout implies, which the source does not store, measuring its text first.
+ * Documents that store their geometry, such as `.fig` files, keep theirs and do not come here.
+ */
+export function layoutAuthoredNodes(graph: SceneGraph, rootIds: Iterable<string>): void {
+  const roots = [...rootIds]
+  const pageIds = new Set<string>()
+  let outsidePages = false
+  for (const id of roots) {
+    sizeAutoResizingText(graph, id)
+    const page = graph.pageOf(id)
+    if (page !== null) pageIds.add(page)
+    else outsidePages = true
+  }
+  const layout = () => {
+    if (outsidePages) computeAllLayouts(graph)
+    else for (const pageId of pageIds) computeAllLayouts(graph, pageId)
+  }
+  layout()
+  // Layout gives wrapping text its width, which its height follows.
+  if (roots.map((id) => sizeAutoResizingText(graph, id, true)).some(Boolean)) layout()
+  // Connectors authored with the layers they join route once those layers are in place.
+  for (const id of roots) {
+    for (const { node } of graph.flattenTree(id)) {
+      if (node.type === 'CONNECTOR') layoutConnector(graph, node)
+    }
+  }
 }
 
 function computeLayoutsBottomUp(graph: SceneGraph, nodeId: string, visited: Set<string>): void {
@@ -111,10 +174,18 @@ function buildYogaTree(
     if (frame.layoutMode === 'HORIZONTAL') root.setHeight(frame.height)
     else root.setWidth(frame.width)
   }
+  // Laid out on its own, a frame its parent stretches keeps the size the parent gave it on
+  // that axis, so its content aligns within that size rather than within a hug.
+  const stretchedAxis = parentStretchedAxis(graph, frame)
+  if (stretchedAxis === 'width') root.setWidth(frame.width)
+  if (stretchedAxis === 'height') root.setHeight(frame.height)
+  const heldAxis = heldHugAxis(graph, frame)
+  if (heldAxis === 'width') root.setWidth(frame.width)
+  if (heldAxis === 'height') root.setHeight(frame.height)
 
   configureFlexContainer(root, frame, direction)
 
-  const children = graph.getChildren(frame.id)
+  const children = graph.getChildren(frame.id).map((child) => asLaidOutIn(graph, child, frame))
   for (const child of children) {
     const yogaChild = createYogaNode()
 
@@ -159,7 +230,10 @@ function configureFlexContainer(
   yogaNode.setPadding(Edge.Bottom, node.paddingBottom)
   yogaNode.setPadding(Edge.Left, node.paddingLeft)
 
-  const primaryGap = node.primaryAxisAlign === 'SPACE_BETWEEN' ? 0 : node.itemSpacing
+  // Space between takes the place of the gap in Figma's auto layout. A generated frame keeps it
+  // as the least space between its sublayers, as a sticky note keeps its author clear of a long body.
+  const primaryGap =
+    node.primaryAxisAlign === 'SPACE_BETWEEN' && !isGeneratedFrame(node) ? 0 : node.itemSpacing
   yogaNode.setGap(
     Gutter.Column,
     node.layoutMode === 'HORIZONTAL' ? primaryGap : node.counterAxisSpacing
@@ -225,6 +299,7 @@ function configureChildAsGrid(
   const selfAlign = mapAlignSelf(child.layoutAlignSelf)
   if (selfAlign != null) yogaChild.setAlignSelf(selfAlign)
 
+  applyLockedAspectRatio(yogaChild, child, parent)
   applyMinMaxConstraints(yogaChild, child)
 
   const grandchildren = graph.getChildren(child.id)
@@ -234,12 +309,11 @@ function configureChildAsGrid(
       configureAbsoluteChild(yogaGC, gc)
       yogaChild.insertChild(yogaGC, yogaChild.getChildCount())
     } else {
-      yogaChild.insertChild(createGridChildNode(gc), yogaChild.getChildCount())
+      yogaChild.insertChild(createGridChildNode(graph, gc), yogaChild.getChildCount())
     }
   }
 }
 
-type AxisSizing = SceneNode['primaryAxisSizing']
 function sizesFitParent(
   parent: SceneNode,
   childCount: number,
@@ -266,6 +340,7 @@ function derivedMainAxisFitsParent(
   child: SceneNode,
   axis: 'width' | 'height'
 ): boolean {
+  if (!keepsSavedLayout(graph, parent)) return false
   const children = graph
     .getChildren(parent.id)
     .filter((candidate) => candidate.visible && candidate.layoutPositioning !== 'ABSOLUTE')
@@ -278,46 +353,29 @@ function derivedMainAxisFitsParent(
   )
 }
 
-function usesAuthoritativeGeneratedStretch(parent: SceneNode, child: SceneNode): boolean {
-  if (
-    child.layoutAlignSelf !== 'STRETCH' ||
-    parent.source.format === 'fig' ||
-    !parent.derivedLayout
-  ) {
-    return false
-  }
-  const derivedCrossSize =
-    parent.layoutMode === 'HORIZONTAL' ? parent.derivedLayout.height : parent.derivedLayout.width
-  const parentCrossSize = parent.layoutMode === 'HORIZONTAL' ? parent.height : parent.width
-  return derivedCrossSize !== undefined && Math.abs(derivedCrossSize - parentCrossSize) < 0.001
-}
-
 function configureAutoLayoutChildSizing(
   yogaChild: YogaNode,
   child: SceneNode,
   parent: SceneNode,
   graph: SceneGraph,
-  widthSizing: AxisSizing,
-  heightSizing: AxisSizing
+  widthSizing: LayoutSizing,
+  heightSizing: LayoutSizing
 ): void {
   const isParentRow = parent.layoutMode === 'HORIZONTAL'
   const fixedDerivedMainAxis = isParentRow
     ? derivedMainAxisFitsParent(graph, parent, child, 'width')
     : derivedMainAxisFitsParent(graph, parent, child, 'height')
-  const stretchesAuthoritativeCrossAxis = usesAuthoritativeGeneratedStretch(parent, child)
 
   if (isParentRow) {
     if (fixedDerivedMainAxis) yogaChild.setWidth(child.derivedLayout?.width ?? child.width)
     else setMainAxisSizing(yogaChild, 'width', widthSizing, child.width, child.layoutGrow)
-    if (!stretchesAuthoritativeCrossAxis) {
-      setCrossAxisSizing(yogaChild, 'height', heightSizing, child.height)
-    }
+    const keepsSize = fillKeepsSizeInHuggingParent(child, parent, 'height')
+    setCrossAxisSizing(yogaChild, 'height', heightSizing, child.height, keepsSize)
     return
   }
 
-  if (!stretchesAuthoritativeCrossAxis) {
-    setCrossAxisSizing(yogaChild, 'width', widthSizing, child.width)
-  }
+  const keepsSize = fillKeepsSizeInHuggingParent(child, parent, 'width')
+  setCrossAxisSizing(yogaChild, 'width', widthSizing, child.width, keepsSize)
   if (fixedDerivedMainAxis) yogaChild.setHeight(child.derivedLayout?.height ?? child.height)
   else setMainAxisSizing(yogaChild, 'height', heightSizing, child.height, child.layoutGrow)
 }
@@ -330,26 +388,32 @@ function configureChildAsAutoLayout(
   inheritedDirection: 'LTR' | 'RTL'
 ): void {
   const direction = resolveNodeLayoutDirection(child, inheritedDirection)
-  const isChildRow = child.layoutMode === 'HORIZONTAL'
-  const widthSizing = isChildRow ? child.primaryAxisSizing : child.counterAxisSizing
-  const heightSizing = isChildRow ? child.counterAxisSizing : child.primaryAxisSizing
+  const widthSizing = layoutSizing(graph, child, 'HORIZONTAL')
+  const heightSizing = layoutSizing(graph, child, 'VERTICAL')
 
   configureAutoLayoutChildSizing(yogaChild, child, parent, graph, widthSizing, heightSizing)
 
   const selfAlign = mapAlignSelf(child.layoutAlignSelf)
   if (selfAlign != null) yogaChild.setAlignSelf(selfAlign)
+  applyLockedAspectRatio(yogaChild, child, parent)
 
-  if (usesDetachedDerivedLayout(child)) {
+  if (usesDetachedDerivedLayout(graph, child)) {
+    // The imported size is what the child's own hug produced, whether or not it also fills.
     const derived = child.derivedLayout
-    if (widthSizing === 'HUG') yogaChild.setWidth(derived?.width ?? child.width)
-    if (heightSizing === 'HUG') yogaChild.setHeight(derived?.height ?? child.height)
+    if (ownAxisSizing(child, 'width') === 'HUG') yogaChild.setWidth(derived?.width ?? child.width)
+    if (ownAxisSizing(child, 'height') === 'HUG') {
+      yogaChild.setHeight(derived?.height ?? child.height)
+    }
     applyMinMaxConstraints(yogaChild, child)
     return
   }
 
   configureFlexContainer(yogaChild, child, direction)
+  const heldAxis = heldHugAxis(graph, child)
+  if (heldAxis === 'width' && widthSizing === 'HUG') yogaChild.setWidth(child.width)
+  if (heldAxis === 'height' && heightSizing === 'HUG') yogaChild.setHeight(child.height)
 
-  const grandchildren = graph.getChildren(child.id)
+  const grandchildren = graph.getChildren(child.id).map((gc) => asLaidOutIn(graph, gc, child))
   for (const gc of grandchildren) {
     const yogaGC = createYogaNode()
     if (gc.layoutPositioning === 'ABSOLUTE') {
@@ -443,10 +507,11 @@ function configureTextLeafWithoutMeasurer(
 
 function configureChildAsLeaf(
   yogaChild: YogaNode,
-  child: SceneNode,
+  node: SceneNode,
   parent: SceneNode,
   graph: SceneGraph
 ): void {
+  const child = asFlatLeaf(node, parent)
   const isRow = parent.layoutMode === 'HORIZONTAL'
   const selfOverride = child.layoutAlignSelf !== 'AUTO'
   const stretchCross = selfOverride
@@ -483,6 +548,7 @@ function configureChildAsLeaf(
   const selfAlign = mapAlignSelf(child.layoutAlignSelf)
   if (selfAlign != null) yogaChild.setAlignSelf(selfAlign)
 
+  applyLockedAspectRatio(yogaChild, child, parent)
   applyMinMaxConstraints(yogaChild, child)
 }
 
@@ -513,8 +579,7 @@ function configureTextLeaf(
       const cached = cache.get(cacheKey)
       if (cached) return cached
 
-      const measured = getTextMeasurer()?.(child, maxW)
-      const result = measured ?? estimateTextSize(child, maxW)
+      const result = measureTextForLayout(child, maxW)
       cache.set(cacheKey, result)
       return result
     })
@@ -544,61 +609,9 @@ function configureTextLeaf(
       if (constraintW === child.width && (child.derivedTextGlyphs?.length ?? 0) > 0) {
         return { width: constraintW, height: child.height }
       }
-      const measured = getTextMeasurer()?.(child, constraintW)
-      const result = {
-        width: constraintW,
-        height: measured?.height ?? estimateTextSize(child, constraintW).height
-      }
+      const result = { width: constraintW, height: measureTextForLayout(child, constraintW).height }
       cache.set(cacheKey, result)
       return result
     })
-  }
-}
-
-function setMainAxisSizing(
-  yogaNode: YogaNode,
-  axis: 'width' | 'height',
-  sizing: AxisSizing,
-  fixedValue: number,
-  grow: number
-): void {
-  if (grow > 0) {
-    yogaNode.setFlexGrow(grow)
-    yogaNode.setFlexShrink(1)
-    yogaNode.setFlexBasis(0)
-    return
-  }
-
-  switch (sizing) {
-    case 'FIXED':
-      if (axis === 'width') yogaNode.setWidth(fixedValue)
-      else yogaNode.setHeight(fixedValue)
-      break
-    case 'HUG':
-      break
-    case 'FILL':
-      yogaNode.setFlexGrow(1)
-      yogaNode.setFlexShrink(1)
-      yogaNode.setFlexBasis(0)
-      break
-  }
-}
-
-function setCrossAxisSizing(
-  yogaNode: YogaNode,
-  axis: 'width' | 'height',
-  sizing: AxisSizing,
-  fixedValue: number
-): void {
-  switch (sizing) {
-    case 'FIXED':
-      if (axis === 'width') yogaNode.setWidth(fixedValue)
-      else yogaNode.setHeight(fixedValue)
-      break
-    case 'HUG':
-      break
-    case 'FILL':
-      yogaNode.setAlignSelf(Align.Stretch)
-      break
   }
 }

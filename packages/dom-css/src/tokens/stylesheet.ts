@@ -5,8 +5,10 @@ import type {
   VariableCollectionMode,
   VariableValue
 } from '@open-pencil/scene-graph'
+import { variableValueReferences } from '@open-pencil/scene-graph/variables'
 
 import { cssColor } from '../export/css'
+import { formulaToCSS } from './formula'
 import { collectionVariables, tokenSlug, variableCSSNames, variableNamespace } from './names'
 import { createTokenValidator, parseWithBrowser, type TokenValidator } from './validate'
 import { tokenNumberToCSS, variableUnit } from './values'
@@ -66,12 +68,20 @@ function modeSlug(collection: VariableCollection, mode: VariableCollectionMode):
   return plainSlug(mode)
 }
 
+/** The attribute a collection's manual modes are switched by, unless it names its own. */
+export function defaultModeAttributeName(collection: VariableCollection): string {
+  return `data-${tokenSlug(collection.name) || 'mode'}`
+}
+
 /** The attribute that puts an element in a mode with no condition of its own: `data-theme`. */
 export function modeAttribute(
   collection: VariableCollection,
   mode: VariableCollectionMode
 ): { name: string; value: string } {
-  return { name: `data-${tokenSlug(collection.name) || 'mode'}`, value: modeSlug(collection, mode) }
+  return {
+    name: collection.modeAttribute ?? defaultModeAttributeName(collection),
+    value: modeSlug(collection, mode)
+  }
 }
 
 /** The scope a mode applies in when it names none: `[data-theme="dark"]` for Theme / Dark. */
@@ -92,11 +102,18 @@ function modeValue(
   variable: Variable,
   value: VariableValue | undefined,
   modeId: string,
-  names: ReadonlyMap<string, string>
+  names: ReadonlyMap<string, string>,
+  variables: ReadonlyMap<string, Variable>
 ): string | { issue: string } {
   const expression = variable.expressions?.[modeId]
   if (expression) return expression.css
   if (value === undefined) return { issue: 'has no value in this mode' }
+  if (typeof value === 'object' && 'expression' in value) {
+    if (value.expression === 'FORMULA' && variable.type === 'FLOAT')
+      return formulaToCSS(value.value, variable, variables, names)
+    if (variable.type === 'BOOLEAN') return { issue: 'is a boolean, which CSS has no value for' }
+    return { issue: 'uses an expression that CSS token export does not support' }
+  }
   if (typeof value === 'object' && 'aliasId' in value) {
     const target = names.get(value.aliasId)
     return target ? `var(--${target})` : { issue: 'aliases a variable that does not exist' }
@@ -108,10 +125,6 @@ function modeValue(
     return variableNamespace(variable) === 'font' ? value : quoteString(value)
   if (variable.type === 'BOOLEAN') return { issue: 'is a boolean, which CSS has no value for' }
   return { issue: 'has a value that does not match its type' }
-}
-
-function aliasTarget(value: VariableValue | undefined): string | undefined {
-  return typeof value === 'object' && 'aliasId' in value ? value.aliasId : undefined
 }
 
 function block(selector: string, declarations: Declaration[], indent = ''): string {
@@ -146,7 +159,8 @@ function variantNames(scopes: ModeScope[]): string[] {
  * Variables as a stylesheet of custom properties. The default mode of every collection is the
  * base set, in `:root` or, for Tailwind, in `@theme` when the token has a Tailwind namespace;
  * every other mode overrides the values that differ, under its condition. Aliases stay `var()`
- * references and are declared again in each mode that changes what they point to.
+ * references, and number formulas `calc()` over them; both are declared again in each mode that
+ * changes what they point to.
  */
 export function buildTokenStylesheet(
   source: TokenSource,
@@ -167,7 +181,7 @@ export function buildTokenStylesheet(
     value: VariableValue | undefined
   ): Declaration | undefined {
     const name = names.get(variable.id) ?? variable.id
-    const css = modeValue(variable, value, modeId, names)
+    const css = modeValue(variable, value, modeId, names, source.variables)
     if (typeof css !== 'string') {
       issues.push({ message: `${variable.name} ${css.issue}`, variableId: variable.id, modeId })
       return undefined
@@ -197,7 +211,7 @@ export function buildTokenStylesheet(
 
   /**
    * What a mode's scope declares: the collection's values that differ from its default, and every
-   * alias, in any collection, whose chain reaches one of them. Custom properties inherit as
+   * alias or formula, in any collection, whose chain reaches one of them. Custom properties inherit as
    * computed values, so `--primary: var(--blue)` resolved at `:root` would keep the old blue
    * unless it is declared again where `--blue` changes.
    */
@@ -222,8 +236,8 @@ export function buildTokenStylesheet(
     for (let grew = true; grew;) {
       grew = false
       for (const variable of variables) {
-        const target = aliasTarget(valueIn(variable))
-        if (scoped.has(variable.id) || !target || !scoped.has(target)) continue
+        const references = variableValueReferences(valueIn(variable))
+        if (scoped.has(variable.id) || !references.some((target) => scoped.has(target))) continue
         const declaration = inMode.get(variable.id) ?? defaults.get(variable.id)
         if (!declaration) continue
         scoped.set(variable.id, declaration)
@@ -276,7 +290,7 @@ export function buildTokenStylesheet(
  * object model package loads on first use; its browser build exports nothing, so it is never
  * the browser path.
  */
-async function tokenValidator(): Promise<TokenValidator> {
+export async function loadTokenValidator(): Promise<TokenValidator> {
   if (typeof CSSStyleSheet === 'function') return createTokenValidator(parseWithBrowser)
   const headless = await import('./cssom-validator')
   return headless.tokenValidator
@@ -286,5 +300,5 @@ export async function tokenStylesheet(
   source: TokenSource,
   options: TokenStylesheetOptions
 ): Promise<TokenStylesheet> {
-  return buildTokenStylesheet(source, options, await tokenValidator())
+  return buildTokenStylesheet(source, options, await loadTokenValidator())
 }

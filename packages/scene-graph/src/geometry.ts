@@ -1,6 +1,6 @@
 import { arrowCapOverflow } from './arrow-caps'
-import type { Effect, Stroke, StrokeCap, VectorNetwork } from './index'
 import type { Rect, Vector } from './primitives'
+import type { Effect, Stroke, StrokeCap, StrokeJoin, VectorNetwork } from './types'
 
 export function degToRad(degrees: number): number {
   return (degrees * Math.PI) / 180
@@ -138,20 +138,75 @@ export function polygonVertices(node: {
   })
 }
 
+/**
+ * What shapes how far a layer's stroke reaches past its box: its type, since a line is stroked to
+ * one side, and its join and miter limit, for the tips mitered path corners reach.
+ */
+export interface StrokeShape {
+  type?: string
+  strokeJoin?: StrokeJoin
+  strokeMiterLimit?: number
+}
+
 export function strokeOverflow(
   strokes?: Stroke[],
   fallbackCap?: StrokeCap,
-  network?: VectorNetwork | null
+  network?: VectorNetwork | null,
+  shape?: StrokeShape
 ): number {
+  const line = shape?.type === 'LINE'
   let overflow = 0
   for (const stroke of strokes ?? []) {
     if (!stroke.visible) continue
     let extra = 0
-    if (stroke.align === 'OUTSIDE') extra = stroke.weight
+    if (line || stroke.align === 'OUTSIDE') extra = stroke.weight
     else if (stroke.align === 'CENTER') extra = stroke.weight / 2
-    overflow = Math.max(overflow, extra)
+    const miter = network
+      ? miterRatio(network, stroke.join ?? shape?.strokeJoin, shape?.strokeMiterLimit)
+      : 1
+    overflow = Math.max(overflow, extra * miter)
   }
-  return Math.max(overflow, arrowCapOverflow(strokes, fallbackCap, network))
+  // A line's heads sit on its stroke's middle, half a weight off the line.
+  const heads = arrowCapOverflow(strokes, fallbackCap, network)
+  return Math.max(overflow, heads > 0 && line ? heads + overflow / 2 : heads)
+}
+
+/** The direction a segment leaves `vertex` in, along its handle when it has one. */
+function leaving(network: VectorNetwork, index: number, vertex: number): Vector {
+  const segment = network.segments[index]
+  const atStart = segment.start === vertex
+  const handle = atStart ? segment.tangentStart : segment.tangentEnd
+  if (handle.x !== 0 || handle.y !== 0) return handle
+  const from = network.vertices[vertex]
+  const to = network.vertices[atStart ? segment.end : segment.start]
+  return { x: to.x - from.x, y: to.y - from.y }
+}
+
+/**
+ * How far past half the stroke the sharpest mitered corner reaches, as a multiple: a corner of
+ * angle θ mitres out to 1/sin(θ/2), unless that passes the miter limit and it bevels instead.
+ * Corners are the vertices exactly two segments meet at, as the stroke joins them.
+ */
+function miterRatio(network: VectorNetwork, join: StrokeJoin | undefined, limit = 4): number {
+  const meeting = new Map<number, number[]>()
+  for (const [index, segment] of network.segments.entries()) {
+    for (const vertex of new Set([segment.start, segment.end])) {
+      meeting.set(vertex, [...(meeting.get(vertex) ?? []), index])
+    }
+  }
+  let ratio = 1
+  for (const [vertex, indices] of meeting) {
+    if (indices.length !== 2) continue
+    if ((network.vertices[vertex].strokeJoin ?? join ?? 'MITER') !== 'MITER') continue
+    const a = leaving(network, indices[0], vertex)
+    const b = leaving(network, indices[1], vertex)
+    const lengths = Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y)
+    if (lengths === 0) continue
+    const angle = Math.acos(Math.max(-1, Math.min(1, (a.x * b.x + a.y * b.y) / lengths)))
+    const miter = 1 / Math.sin(angle / 2)
+    if (miter <= limit) ratio = Math.max(ratio, miter)
+  }
+  return ratio
 }
 
 export function effectOverflow(effects?: Effect[]) {
@@ -192,16 +247,18 @@ export function computeAbsoluteBounds(
 }
 
 export function computeVisualBounds(
-  nodes: Iterable<{
-    id: string
-    width: number
-    height: number
-    rotation?: number
-    strokes?: Stroke[]
-    strokeCap?: StrokeCap
-    vectorNetwork?: VectorNetwork | null
-    effects?: Effect[]
-  }>,
+  nodes: Iterable<
+    {
+      id: string
+      width: number
+      height: number
+      rotation?: number
+      strokes?: Stroke[]
+      strokeCap?: StrokeCap
+      vectorNetwork?: VectorNetwork | null
+      effects?: Effect[]
+    } & StrokeShape
+  >,
   getAbsolutePosition: (id: string) => Vector
 ): Rect {
   const bounds = createBoundsAccumulator()
@@ -209,7 +266,7 @@ export function computeVisualBounds(
   for (const n of nodes) {
     const abs = getAbsolutePosition(n.id)
     const bbox = rotatedBBox(abs.x, abs.y, n.width, n.height, n.rotation ?? 0)
-    const stroke = strokeOverflow(n.strokes, n.strokeCap, n.vectorNetwork)
+    const stroke = strokeOverflow(n.strokes, n.strokeCap, n.vectorNetwork, n)
     const effects = effectOverflow(n.effects)
     includePoint(bounds, bbox.left - stroke - effects.left, bbox.top - stroke - effects.top)
     includePoint(bounds, bbox.right + stroke + effects.right, bbox.bottom + stroke + effects.bottom)
@@ -352,14 +409,18 @@ export function nodeVisualBounds(
     bounds = unionVisualBounds(bounds, transformedLocalBounds(node, localGeometry, abs)) ?? bounds
   }
 
-  if (node.type === 'TEXT' && node.textDecoration && node.textDecoration !== 'NONE') {
-    const fontSize = node.fontSize ?? 14
-    const underlineOffset = node.textUnderlineOffset ?? fontSize * 0.18
-    const thickness = node.textDecorationThickness ?? Math.max(1, fontSize / 16)
-    bounds.maxY += underlineOffset + thickness + fontSize * 0.35
-  }
+  bounds.maxY += textDecorationOverflow(node)
 
   return bounds
+}
+
+/** How far a text node's underline or strikethrough reaches below its box. */
+export function textDecorationOverflow(node: VisualBoundsNode): number {
+  if (node.type !== 'TEXT' || !node.textDecoration || node.textDecoration === 'NONE') return 0
+  const fontSize = node.fontSize ?? 14
+  const underlineOffset = node.textUnderlineOffset ?? fontSize * 0.18
+  const thickness = node.textDecorationThickness ?? Math.max(1, fontSize / 16)
+  return underlineOffset + thickness + fontSize * 0.35
 }
 
 function collectDescendantVisualBounds(

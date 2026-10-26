@@ -1,13 +1,15 @@
+import { useElementSize } from '@vueuse/core'
 import type { CanvasKit } from 'canvaskit-wasm'
 import type { Ref } from 'vue'
 
-import type { Editor } from '@open-pencil/core/editor'
+import type { Editor } from '@open-pencil/core'
 
 import {
   createCanvasSurfaceManager,
   useCanvasSurfaceLifecycle
 } from '#vue/canvas/surface/lifecycle'
 import { createCanvasHitTests, createRulerVisibility } from '#vue/canvas/surface/overlays'
+import { useShaderPlayback } from '#vue/canvas/surface/shader/playback'
 import type { UseCanvasOptions } from '#vue/canvas/surface/types'
 
 export type { UseCanvasOptions } from '#vue/canvas/surface/types'
@@ -46,11 +48,30 @@ export function useCanvas(
     setCanvasKit: (value) => {
       ck = value
     },
-    onReady: options?.onReady
+    onReady: options?.onReady,
+    onFailed: options?.onFailed
   })
 
-  const { hitTestSectionTitle, hitTestComponentLabel, hitTestFrameTitle, hitTestIssueMarker } =
-    createCanvasHitTests(editor, surface.getRenderer)
+  // The scene surface plays shaders in preview; an overlay surface draws none.
+  if (options?.layer !== 'overlays') {
+    // The view's size in CSS pixels, which the editor's pan and zoom map the page onto.
+    const viewport = useElementSize(canvasRef)
+    useShaderPlayback({
+      editor,
+      getRenderer: surface.getRenderer,
+      getView: () => options?.getRenderState?.() ?? editor.state,
+      getViewport: () => ({ width: viewport.width.value, height: viewport.height.value }),
+      markDirty: surface.markDirty
+    })
+  }
+
+  const {
+    hitTestSectionTitle,
+    hitTestComponentLabel,
+    hitTestFrameTitle,
+    hitTestIssueMarker,
+    hitTestStatusLabel
+  } = createCanvasHitTests(editor, surface.getRenderer)
 
   return {
     render: surface.markDirty,
@@ -58,6 +79,7 @@ export function useCanvas(
     hitTestSectionTitle,
     hitTestComponentLabel,
     hitTestFrameTitle,
-    hitTestIssueMarker
+    hitTestIssueMarker,
+    hitTestStatusLabel
   }
 }

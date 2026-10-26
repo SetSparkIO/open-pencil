@@ -1,11 +1,11 @@
 /** @jsxImportSource @open-pencil/dom-css */
 import { describe, expect, it } from 'bun:test'
 
+import { serializeHTML } from '#dom-css/export/index'
 import {
   createHeadlessCSSRuntime,
   jsxToDesignDocument,
   jsxToSceneGraph,
-  serializeHTML,
   tailwindJSXToSceneGraph
 } from '#dom-css/index'
 
@@ -65,8 +65,9 @@ describe('@open-pencil/dom-css JSX', () => {
 
     expect(card?.type).toBe('FRAME')
     if (card?.type !== 'FRAME') return
-    expect(card.width).toBe(320)
-    expect(card.height).toBe(160)
+    // CSS sizes the content box, so padding comes on top.
+    expect(card.width).toBe(320 + 2 * 24)
+    expect(card.height).toBe(160 + 2 * 24)
     expect(card.layoutMode).toBe('VERTICAL')
     expect(card.paddingLeft).toBe(24)
 

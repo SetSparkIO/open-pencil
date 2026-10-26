@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { templateRef } from '@vueuse/core'
-import { nextTick, ref, onUnmounted } from 'vue'
+import { ref, onUnmounted, useTemplateRef } from 'vue'
 
-import { useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
 
+import { openAISetup } from '@/app/ai/models/settings/onboarding/dialog'
+import {
+  useModelConnectionStates,
+  type ModelConnectionState
+} from '@/app/ai/models/settings/status'
 import { useModelSettings } from '@/app/ai/models/settings/use'
 import SettingsPage from '@/components/settings/layout/SettingsPage.vue'
 import SettingsSection from '@/components/settings/layout/SettingsSection.vue'
@@ -11,80 +15,89 @@ import ProfileEditor from '@/components/settings/models/ProfileEditor.vue'
 import RoleAssignments from '@/components/settings/models/RoleAssignments.vue'
 import AppButton from '@/components/ui/button/AppButton.vue'
 import AppActionRow from '@/components/ui/list/AppActionRow.vue'
-import { modelPanelTransition } from '@/theme/settings/models'
+import PanelDrillIn from '@/components/ui/panel/PanelDrillIn.vue'
 
 const { ai, collaboration, common } = useI18n()
 const editing = defineModel<boolean>('editing', { default: false })
 const editingProfileId = ref<string>()
-const editorLeaving = ref(false)
-const panel = templateRef<HTMLElement>('panel')
-let returnFocus: HTMLElement | null = null
-function captureFocus() {
-  returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-}
-async function restoreFocus() {
-  editorLeaving.value = false
-  await nextTick()
-  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true })
-  returnFocus = null
-}
-async function focusEditor() {
-  await nextTick()
-  panel.value
-    ?.querySelector<HTMLInputElement>('[data-test-id="settings-model-editor"] input')
-    ?.focus({ preventScroll: true })
+const editor = useTemplateRef('editor')
+
+/** The editor opens on its name field rather than the back control. */
+function focusEditor(event: Event): void {
+  if (!editor.value) return
+  event.preventDefault()
+  editor.value.focus()
 }
 onUnmounted(() => {
   editing.value = false
 })
 
 function addModel(): void {
-  captureFocus()
   editingProfileId.value = undefined
   editing.value = true
 }
 
 function editModel(profileId: string): void {
-  captureFocus()
   editingProfileId.value = profileId
   editing.value = true
 }
 
-function statusLabel(connectionId: string, providerID: string): string {
-  if (providerID.startsWith('acp:')) return ai.value.modelAgentConnection
-  const status = statusByConnection.value[connectionId]
-  if (status === 'configured') return collaboration.value.connected
-  if (status === 'locked' || status === 'unavailable') return common.value.unavailable
-  return ai.value.modelNeedsCredential
+function statusLabel(state: ModelConnectionState): string {
+  switch (state) {
+    case 'connected':
+      return collaboration.value.connected
+    case 'needs-credential':
+      return ai.value.modelNeedsCredential
+    case 'unavailable':
+      return common.value.unavailable
+    case 'checking':
+      return ai.value.modelConnectionChecking
+    case 'not-installed':
+      return ai.value.modelNotInstalled
+    case 'installed':
+      return ai.value.modelInstalled
+    case 'signed-out':
+      return ai.value.modelSignedOut
+    case 'tools-unreachable':
+      return ai.value.modelToolsUnreachable
+    case 'agent':
+      return ai.value.modelAgentConnection
+  }
+}
+
+/** Green when it works, amber when the person has something to fix, grey otherwise. */
+function statusTone(state: ModelConnectionState): 'ok' | 'attention' | 'neutral' {
+  if (state === 'connected') return 'ok'
+  if (state === 'signed-out' || state === 'tools-unreachable' || state === 'not-installed') {
+    return 'attention'
+  }
+  return 'neutral'
 }
 
 function closeEditor(): void {
-  editorLeaving.value = true
   editing.value = false
   void refreshStatuses()
+  void refreshAgents()
 }
 
 const { profiles, statusByConnection, refreshStatuses } = useModelSettings()
+const { connectionState, refresh: refreshAgents } = useModelConnectionStates(statusByConnection)
 </script>
 
 <template>
-  <div ref="panel" class="relative flex min-h-0 flex-1 flex-col">
-    <Transition
-      v-bind="modelPanelTransition"
-      @after-enter="focusEditor"
-      @after-leave="restoreFocus"
-    >
-      <div v-if="editing" class="absolute inset-0 flex min-h-0 flex-col">
-        <ProfileEditor
-          :key="editingProfileId ?? 'new'"
-          :profile-id="editingProfileId"
-          @done="closeEditor"
-          @deleted="closeEditor"
-        />
-      </div>
-    </Transition>
+  <!-- The Settings window's breadcrumb is the way back, so the drill-in draws no back bar. -->
+  <PanelDrillIn :open="editing" @open-auto-focus="focusEditor">
+    <template #detail>
+      <ProfileEditor
+        ref="editor"
+        :key="editingProfileId ?? 'new'"
+        :profile-id="editingProfileId"
+        @done="closeEditor"
+        @deleted="closeEditor"
+      />
+    </template>
 
-    <SettingsPage v-show="!editing && !editorLeaving">
+    <SettingsPage>
       <div class="flex flex-col gap-6">
         <SettingsSection>
           <template #title>{{ ai.modelsTitle }}</template>
@@ -127,21 +140,16 @@ const { profiles, statusByConnection, refreshStatuses } = useModelSettings()
               <template #trailing>
                 <span
                   class="mr-1 flex items-center gap-1 text-[11px] text-muted"
-                  :data-state="
-                    statusByConnection[profile.connectionId] === 'configured'
-                      ? 'configured'
-                      : 'missing'
-                  "
+                  data-test-id="settings-model-status"
+                  :data-state="connectionState(profile.connectionId, profile.providerID)"
                 >
                   <span
-                    class="size-1.5 rounded-full bg-muted data-[state=configured]:bg-[var(--color-success)]"
-                    :data-state="
-                      statusByConnection[profile.connectionId] === 'configured'
-                        ? 'configured'
-                        : 'missing'
+                    class="size-1.5 rounded-full bg-muted data-[tone=attention]:bg-warning data-[tone=ok]:bg-success"
+                    :data-tone="
+                      statusTone(connectionState(profile.connectionId, profile.providerID))
                     "
                   />
-                  {{ statusLabel(profile.connectionId, profile.providerID) }}
+                  {{ statusLabel(connectionState(profile.connectionId, profile.providerID)) }}
                 </span>
                 <span
                   v-for="capability in profile.capabilities"
@@ -158,6 +166,17 @@ const { profiles, statusByConnection, refreshStatuses } = useModelSettings()
               </template>
             </AppActionRow>
           </div>
+          <AppButton
+            color="primary"
+            variant="link"
+            size="xs"
+            class="self-start"
+            data-test-id="settings-run-ai-setup"
+            @click="openAISetup()"
+          >
+            <template #leading><icon-lucide-sparkles class="size-3" /></template>
+            {{ ai.aiSetupRun }}
+          </AppButton>
         </SettingsSection>
 
         <SettingsSection>
@@ -168,5 +187,5 @@ const { profiles, statusByConnection, refreshStatuses } = useModelSettings()
         <slot />
       </div>
     </SettingsPage>
-  </div>
+  </PanelDrillIn>
 </template>

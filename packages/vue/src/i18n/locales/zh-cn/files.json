@@ -11,6 +11,7 @@
   "importing": "正在导入…",
   "importToCanvas": "导入到画布",
   "newTab": "新标签页",
+  "home": "主页",
   "closeTab": "关闭 {name}",
   "clipboardImageUnavailableWeb": "粘贴的设计包含 1 张无法在网页应用中加载的图片。请使用桌面应用以包含该图片。",
   "clipboardImagesUnavailableWeb": "粘贴的设计包含 {count} 张无法在网页应用中加载的图片。请使用桌面应用以包含这些图片。",
@@ -26,5 +27,6 @@
   "noMatchingFiles": "没有与“{query}”匹配的文件。",
   "saveAsPrompt": "另存为：",
   "browserFileAPINotSupported": "你的浏览器不支持本地文件 API。文件将被下载，而不是保存在原位置。",
-  "browserFileAPIDisabledInBrave": "Brave 默认关闭本地文件 API，因此文件将被下载而不是就地保存。若要就地保存，请启用 brave://flags/#file-system-access-api 并重启 Brave。"
+  "browserFileAPIDisabledInBrave": "Brave 默认关闭本地文件 API，因此文件将被下载而不是就地保存。若要就地保存，请启用 brave://flags/#file-system-access-api 并重启 Brave。",
+  "newDesignIn": "在 {place} 中新建设计"
 }

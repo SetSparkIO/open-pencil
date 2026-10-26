@@ -1,46 +1,34 @@
-import { isEqual } from 'es-toolkit'
-
-import {
-  captureGraphCheckpoint,
-  type SceneGraph,
-  type SceneNode,
-  type Variable
-} from '@open-pencil/scene-graph'
+import type { SceneGraph, SceneNode, Variable } from '@open-pencil/scene-graph'
+import { captureGraphCheckpoint } from '@open-pencil/scene-graph/checkpoint'
 
 import type { Editor } from '#core/editor/create'
+import { ReadOnlyDocumentError } from '#core/editor/read-only'
+import type { EditorState } from '#core/editor/types'
 import type { FigmaAPI } from '#core/figma-api'
 import { isAtomicTool, type ToolDef } from '#core/tools/schema'
+
+import { diffFields, type FieldChanges } from './diff'
 
 // Capture property changes across pages. Component synchronization remains editor-owned.
 const MAX_TRANSACTION_NODES = 10_000
 
-type MutationEditor = Pick<Editor, 'graph' | 'runLayoutForNode' | 'requestRender' | 'pushUndoEntry'>
-type Changes<T> = {
-  id: string
-  before: Partial<T>
-  after: Partial<T>
-  absent: Record<'before' | 'after', (keyof T)[]>
+type MutationEditor = Pick<
+  Editor,
+  'graph' | 'runLayoutForNode' | 'requestRender' | 'pushUndoStep'
+> & {
+  state: Pick<EditorState, 'readOnly'>
 }
 
-function changes<T extends object>(before: Map<string, T>, after: Map<string, T>): Changes<T>[] {
-  const result: Changes<T>[] = []
+function changes<T extends object>(
+  before: Map<string, T>,
+  after: Map<string, T>
+): FieldChanges<T>[] {
+  const result: FieldChanges<T>[] = []
   for (const [id, previous] of before) {
     const current = after.get(id)
     if (!current) throw new Error('Atomic tools must not remove nodes or variables')
-    const inverse: Partial<T> = {}
-    const forward: Partial<T> = {}
-    const absent: Changes<T>['absent'] = { before: [], after: [] }
-    const keys = new Set([...Object.keys(previous), ...Object.keys(current)] as (keyof T)[])
-    for (const key of keys) {
-      const existed = Object.hasOwn(previous, key)
-      const exists = Object.hasOwn(current, key)
-      if (existed === exists && isEqual(previous[key], current[key])) continue
-      inverse[key] = structuredClone(previous[key])
-      forward[key] = structuredClone(current[key])
-      if (!existed) absent.before.push(key)
-      if (!exists) absent.after.push(key)
-    }
-    if (Object.keys(forward).length) result.push({ id, before: inverse, after: forward, absent })
+    const change = diffFields(id, previous, current)
+    if (change) result.push(change)
   }
   if (before.size !== after.size) throw new Error('Atomic tools must not create nodes or variables')
   return result
@@ -59,6 +47,7 @@ export function executeAtomicTool(
   options: { signal?: AbortSignal; isLive?: () => boolean; label?: string } = {}
 ): unknown {
   if (!isAtomicTool(def)) throw new Error(`Not an atomic tool: ${def.name}`)
+  if (editor.state.readOnly) throw new ReadOnlyDocumentError()
   options.signal?.throwIfAborted()
   if (editor.graph !== figma.graph || options.isLive?.() === false) {
     throw new Error('The target document is no longer open')
@@ -72,8 +61,8 @@ export function executeAtomicTool(
   const pageId = figma.currentPageId
 
   const replay = (
-    nodeChanges: Changes<SceneNode>[],
-    variableChanges: Changes<Variable>[],
+    nodeChanges: FieldChanges<SceneNode>[],
+    variableChanges: FieldChanges<Variable>[],
     direction: 'before' | 'after'
   ) => {
     if (editor.graph !== graph) throw new Error('The target document has been replaced')
@@ -123,7 +112,7 @@ export function executeAtomicTool(
       nodeChanges.some((change) => Object.keys(change.after).some((key) => key !== 'source'))
     if (!contentChanged && nodeChanges.length) replay(nodeChanges, [], 'before')
     if (contentChanged) {
-      editor.pushUndoEntry({
+      editor.pushUndoStep({
         label: `${options.label ?? 'Agent'}: ${def.name}`,
         inverse: () => replay(nodeChanges, variableChanges, 'before'),
         forward: () => replay(nodeChanges, variableChanges, 'after')

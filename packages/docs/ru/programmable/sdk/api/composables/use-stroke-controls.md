@@ -15,7 +15,7 @@ description: Настройка расположения и толщины об�
 ## Использование
 
 ```ts
-import { useStrokeControls } from '@open-pencil/vue'
+import { useStrokeControls } from '@open-pencil/vue/controls/stroke'
 
 const strokes = useStrokeControls()
 ```
@@ -31,13 +31,13 @@ const { alignOptions, sideOptions, currentAlign, currentSides, selectSide } = us
 ### Разместить обводку внутри границы объекта
 
 ```ts
-strokes.updateAlign('INSIDE', activeNode)
+strokes.updateAlign('INSIDE')
 ```
 
 ### Ограничить обводку одной стороной
 
 ```ts
-strokes.selectSide('TOP', activeNode)
+strokes.selectSide('TOP')
 ```
 
 ## Связанные API

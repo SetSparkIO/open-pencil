@@ -18,16 +18,25 @@ self.onmessage = ({ data }) => {
     if (typeof type === 'function') return type({ ...normalizedProps, children: normalizedChildren })
     if (type === __fragment) return normalizedChildren
     const element = { type, props: normalizedProps, children: normalizedChildren }
-    if (__source && typeof __source.lineNumber === 'number') element.source = [String(__source.fileName), __source.lineNumber]
+    if (__source && typeof __source.lineNumber === 'number') element.source = __source.lineNumber
     return element
   }
   const helper = (name) => (...args) => ({ __openPencilHelper: name, args })
+  // Each ref() is numbered, so the layer it marks and the ends that refer to it share one handle.
+  let refs = 0
   const helperRuntime = (name) => {
+    if (name === 'ref') return () => ({ __openPencilHelper: 'ref', args: [++refs] })
     if (name === 'defineVars') return (vars) => Object.fromEntries(Object.entries(vars).map(([key, value]) => [key, { __openPencilHelper: 'designVar', args: [value] }]))
     return helper(name)
   }
-  const names = Object.keys(elements)
-  const tags = elements
+  // A dotted element such as Button.Root is a member of its namespace, as JSX reads the tag.
+  const tags = {}
+  for (const [name, type] of Object.entries(elements)) {
+    const [space, member] = name.split('.')
+    if (member === undefined) tags[name] = type
+    else (tags[space] ??= {})[member] = type
+  }
+  const names = Object.keys(tags)
   const helpers = Object.fromEntries(helperNames.map((name) => [name, helperRuntime(name)]))
   const validate = (value, depth = 0, state = { elements: 0, bytes: 0 }) => {
     if (depth > limits.depth) throw new Error('Design JSX output is too deeply nested.')

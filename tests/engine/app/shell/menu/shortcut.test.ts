@@ -14,7 +14,7 @@ describe('app menu shortcut conversion', () => {
   })
 
   test('converts shortcut tokens to tinykeys bindings', () => {
-    expect(shortcutTokenToTinykeys('MOD+SHIFT+S')).toBe('$mod+Shift+S')
+    expect(shortcutTokenToTinykeys('MOD+SHIFT+S')).toBe('$mod+Shift+KeyS')
     expect(shortcutTokenToTinykeys('ALT+Delete')).toBe('Alt+Delete')
     expect(shortcutTokenToTinykeys('⌫')).toBe('Backspace')
   })
@@ -23,6 +23,8 @@ describe('app menu shortcut conversion', () => {
     expect(shortcutTokenToAccelerator('MOD+SHIFT+S')).toBe('CmdOrCtrl+Shift+S')
     expect(shortcutTokenToAccelerator('ALT+A')).toBe('Alt+A')
     expect(shortcutTokenToAccelerator('⌫')).toBe('Backspace')
+    expect(shortcutTokenToAccelerator('⇞')).toBe('PageUp')
+    expect(shortcutTokenToAccelerator('⇟')).toBe('PageDown')
   })
 
   test('derives native accelerators from menu ids', () => {

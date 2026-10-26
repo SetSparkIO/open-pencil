@@ -1,4 +1,7 @@
-import type { GUID, NodeChange } from '@open-pencil/kiwi/fig/codec'
+import { omit } from 'es-toolkit/object'
+
+import type { GUID } from '@open-pencil/kiwi/fig'
+import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
 import { guidToString } from '@open-pencil/kiwi/fig/guid'
 
 import { cloneRecord } from '../node-change/clone'
@@ -15,6 +18,7 @@ import {
   declareSourceVariableBindingUnits
 } from './bindings/variables'
 import { applyDerivedEntry } from './derived-symbol-data'
+import { COMPONENT_IDENTITY_FIELDS } from './fields'
 import {
   ownLayers,
   type AssignmentGroup,
@@ -83,7 +87,11 @@ export function interpretComponent(
 
 /** One source index per document; evaluation state remains local to each call. */
 export function createOccurrenceInterpreter(changes: readonly NodeChange[]) {
-  const index = createSourceIndex(changes)
+  return createIndexedOccurrenceInterpreter(createSourceIndex(changes))
+}
+
+/** An interpreter over an index built elsewhere, such as one that decodes records as read. */
+export function createIndexedOccurrenceInterpreter(index: SourceIndex) {
   return {
     instance: (id: string, options: InterpretInstanceOptions = {}) =>
       interpretRoot(index, id, 'INSTANCE', options),
@@ -357,6 +365,7 @@ function interpretRoot(
     rank: number
   ): InstanceOccurrence => {
     if (expanding.has(id)) throw new Error(`Cyclic component expansion at ${id}`)
+    options.onProgress?.()
     const raw = sources.get(id)
     if (!raw) throw new Error(`Missing source node ${id}`)
     const record = bindRecord(raw, bindings)
@@ -518,6 +527,11 @@ function interpretRoot(
   ): InstanceOccurrence => {
     const original = raw.symbolData?.symbolID
     const [, sourceComponentOverrideKey] = componentKeys(original)
+    // A swapped root draws the replacement's paint, so the old paint's style link goes with it.
+    const placed =
+      base && effective && !sameGuid(original, effective) && source.type === 'INSTANCE'
+        ? omit(source, ['fillPaints', 'styleIdForFill'])
+        : source
     const occurrence: InstanceOccurrence = {
       sourceId: id,
       sourceComponentId: original,
@@ -527,8 +541,9 @@ function interpretRoot(
       overrideKey: readOverrideKey(source.overrideKey),
       // The record is the top layer of its own root: its fields are placed state.
       properties: {
-        ...base?.properties,
-        ...source,
+        // The component's look carries over; its identity does not.
+        ...(base && omit(base.properties, COMPONENT_IDENTITY_FIELDS)),
+        ...placed,
         ...(effective && source.symbolData
           ? { symbolData: { ...source.symbolData, symbolID: effective } }
           : {}),
@@ -563,8 +578,13 @@ function interpretRoot(
     }
     applyInstanceLayoutScale(occurrence, source)
     applyPlacedConstraints(occurrence, base, source)
-    if (source.type === 'INSTANCE' && source.size)
+    if (source.type === 'INSTANCE' && source.size) {
       occurrence.properties.size = structuredClone(source.size)
+      // The size the file keeps for the instance is its own content laid out, such as a hug
+      // frame around longer text than its component's, which a sync with the component must
+      // not replace.
+      occurrence.derivedSize = structuredClone(source.size)
+    }
     if (derived) applyDerivedBounds(occurrence, source)
   }
 

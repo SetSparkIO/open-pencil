@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { createEditor } from '@open-pencil/core'
 import { computeLayout } from '@open-pencil/core/layout'
 
 import { getNodeOrThrow } from '../helpers/assert'
@@ -159,23 +159,26 @@ describe('frame presets', () => {
       width: 100,
       height: 100,
       layoutMode: 'HORIZONTAL',
-      layoutAlignSelf: 'AUTO'
+      layoutGrow: 1,
+      layoutAlignSelf: 'STRETCH'
     }).id
     computeLayout(editor.graph, parentId)
-    expect(getNodeOrThrow(editor.graph, id).width).toBe(500)
+    expect(getNodeOrThrow(editor.graph, id)).toMatchObject({ width: 500, height: 500 })
 
     editor.resizeFrameToPreset(id, { name: 'Custom', width: 200, height: 300 })
     expect(getNodeOrThrow(editor.graph, id)).toMatchObject({
       width: 200,
       height: 300,
+      layoutGrow: 0,
       layoutAlignSelf: 'MIN'
     })
 
     editor.undo.undo()
     expect(getNodeOrThrow(editor.graph, id)).toMatchObject({
       width: 500,
-      height: 100,
-      layoutAlignSelf: 'AUTO'
+      height: 500,
+      layoutGrow: 1,
+      layoutAlignSelf: 'STRETCH'
     })
 
     editor.undo.redo()

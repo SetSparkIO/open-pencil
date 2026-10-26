@@ -1,15 +1,14 @@
 import * as v from 'valibot'
 
-import { nodeIdInput } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { nodeIdInputSchema, defineTool } from '#core/tools/schema'
 
 export const setVisible = defineTool({
   name: 'set_visible',
 
   description: 'Set visibility of a node.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     value: v.pipe(v.boolean(), v.description('Visible (true/false)'))
   }),
   execute: (figma, { id, value }) => {
@@ -25,8 +24,8 @@ export const setBlend = defineTool({
 
   description: 'Set blend mode of a node.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     mode: v.pipe(
       v.picklist([
         'NORMAL',
@@ -62,8 +61,8 @@ export const setLocked = defineTool({
 
   description: 'Set locked state of a node.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     value: v.pipe(v.boolean(), v.description('Locked (true/false)'))
   }),
   execute: (figma, { id, value }) => {
@@ -79,8 +78,8 @@ export const setStrokeAlign = defineTool({
 
   description: 'Set stroke alignment of a node.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     align: v.pipe(v.picklist(['INSIDE', 'CENTER', 'OUTSIDE']), v.description('Stroke alignment'))
   }),
   execute: (figma, { id, align }) => {

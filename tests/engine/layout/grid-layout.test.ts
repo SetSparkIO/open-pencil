@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { computeLayout, computeAllLayouts, FigmaAPI, SceneGraph } from '@open-pencil/core'
+import { FigmaAPI } from '@open-pencil/core/figma-api'
+import { computeLayout, computeAllLayouts } from '@open-pencil/core/layout'
+import { SceneGraph } from '@open-pencil/scene-graph'
 
 import { getNodeOrThrow } from '#tests/helpers/assert'
 import { autoFrame, fixed, fr, gridFrame, pageId, rect } from '#tests/helpers/layout'
@@ -327,8 +329,9 @@ describe('Grid Layout', () => {
     })
   })
 
+  // Figma fills a grid cell per axis: grow fills its width, stretch fills its height.
   describe('grid stretch sizing', () => {
-    test('STRETCH child fills grid cell', () => {
+    test('STRETCH child fills the cell height only', () => {
       const graph = new SceneGraph()
       const frame = gridFrame(graph, pageId(graph), [fr(), fr()], [fr()], {
         width: 300,
@@ -340,11 +343,11 @@ describe('Grid Layout', () => {
       computeLayout(graph, frame.id)
 
       const children = graph.getChildren(frame.id)
-      expect(children[0].width).toBe(150)
+      expect(children[0].width).toBe(50)
       expect(children[0].height).toBe(100)
     })
 
-    test('layoutGrow child fills grid cell', () => {
+    test('layoutGrow child fills the cell width only', () => {
       const graph = new SceneGraph()
       const frame = gridFrame(graph, pageId(graph), [fr(), fr()], [fr()], {
         width: 400,
@@ -357,7 +360,38 @@ describe('Grid Layout', () => {
 
       const children = graph.getChildren(frame.id)
       expect(children[0].width).toBe(200)
+      expect(children[0].height).toBe(50)
+    })
+
+    test('grow and stretch together fill the whole cell', () => {
+      const graph = new SceneGraph()
+      const frame = gridFrame(graph, pageId(graph), [fr(), fr()], [fr()], {
+        width: 400,
+        height: 200
+      })
+      rect(graph, frame.id, 50, 50, { layoutGrow: 1, layoutAlignSelf: 'STRETCH' as const })
+      rect(graph, frame.id, 50, 50)
+
+      computeLayout(graph, frame.id)
+
+      const children = graph.getChildren(frame.id)
+      expect(children[0].width).toBe(200)
       expect(children[0].height).toBe(200)
+    })
+
+    test('an auto-layout child keeps its size unless it fills', () => {
+      const graph = new SceneGraph()
+      const frame = gridFrame(graph, pageId(graph), [fr(), fr()], [fr()], {
+        width: 300,
+        height: 200
+      })
+      autoFrame(graph, frame.id, { layoutMode: 'VERTICAL', width: 40, height: 30 })
+
+      computeLayout(graph, frame.id)
+
+      const children = graph.getChildren(frame.id)
+      expect(children[0].width).toBe(40)
+      expect(children[0].height).toBe(30)
     })
   })
 

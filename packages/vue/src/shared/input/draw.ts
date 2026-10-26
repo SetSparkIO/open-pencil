@@ -1,7 +1,8 @@
+import type { Editor } from '@open-pencil/core'
 import { DEFAULT_TEXT_HEIGHT, DEFAULT_TEXT_WIDTH } from '@open-pencil/core/constants'
-import type { Editor } from '@open-pencil/core/editor'
 import type { NodeType, SceneNode } from '@open-pencil/scene-graph'
 import { getWorldMatrix } from '@open-pencil/scene-graph/coordinate'
+import { generatedFrameText, SHAPE_WITH_TEXT_SIZE } from '@open-pencil/scene-graph/generated'
 import Matrix from '@open-pencil/scene-graph/matrix'
 
 import { findDrawParent } from '#vue/shared/input/drop-target'
@@ -9,7 +10,7 @@ import { TOOL_TO_NODE } from '#vue/shared/input/types'
 import type { DragDraw, DragState } from '#vue/shared/input/types'
 
 /** Maps canvas points into the axes of the parent a layer is drawn in. */
-function parentSpace(editor: Editor, parentId: string): DragDraw['toLocal'] {
+export function parentSpace(editor: Editor, parentId: string): DragDraw['toLocal'] {
   const parent = editor.graph.getNode(parentId)
   if (!parent || parent.type === 'CANVAS') return (x, y) => ({ x, y })
   const toLocal = Matrix.invert(getWorldMatrix(parent, editor.graph)) ?? Matrix.identity()
@@ -30,11 +31,14 @@ function startDraw(
   editor.undo.beginBatch(label)
   const parentId = findDrawParent(cx, cy, type, editor)
   const toLocal = parentSpace(editor, parentId)
-  const start = toLocal(cx, cy)
+  // Figma rounds both corners of a drawn layer to whole pixels.
+  const snap = editor.state.snappingPreferences.pixelGrid ? Math.round : (value: number) => value
+  const local = toLocal(cx, cy)
+  const start = { x: snap(local.x), y: snap(local.y) }
   const nodeId = editor.createShape(type, start.x, start.y, 0, 0, parentId)
   if (type === 'TEXT') editor.graph.updateNode(nodeId, { text: '' })
   editor.select([nodeId])
-  setDrag(createDraw(editor, nodeId, start.x, start.y, toLocal))
+  setDrag(createDraw(editor, nodeId, start.x, start.y, toLocal, type === 'LINE', snap))
 }
 
 export function startTextDraw(
@@ -58,10 +62,24 @@ export function startShapeDraw(
   startDraw(nodeType, 'Create shape', cx, cy, editor, setDrag)
 }
 
+const LINE_ANGLE_STEP = 45
+
+/** A line from the start point to the cursor: its length, no height, and the angle as rotation. */
+function lineGeometry(d: DragDraw, dx: number, dy: number, shiftKey: boolean): Partial<SceneNode> {
+  let angle = (Math.atan2(dy, dx) * 180) / Math.PI
+  // Shift snaps the angle to steps of 45°.
+  if (shiftKey) angle = Math.round(angle / LINE_ANGLE_STEP) * LINE_ANGLE_STEP
+  return { x: d.startX, y: d.startY, width: Math.hypot(dx, dy), height: 0, rotation: angle }
+}
+
 export function handleDrawMove(d: DragDraw, cx: number, cy: number, shiftKey: boolean) {
   const point = d.toLocal(cx, cy)
-  let w = point.x - d.startX
-  let h = point.y - d.startY
+  let w = d.snap(point.x) - d.startX
+  let h = d.snap(point.y) - d.startY
+  if (d.line) {
+    d.update(lineGeometry(d, w, h, shiftKey))
+    return
+  }
 
   if (shiftKey) {
     const size = Math.max(Math.abs(w), Math.abs(h))
@@ -86,10 +104,25 @@ function settleDrawnSize(preview: ReturnType<Editor['beginNodePreview']>, node: 
       height: clicked ? DEFAULT_TEXT_HEIGHT : node.height,
       textAutoResize: clicked ? 'WIDTH_AND_HEIGHT' : 'NONE'
     })
+  } else if (node.type === 'LINE' && node.width < 2) {
+    preview.update(node.id, { width: 100, height: 0, rotation: 0 })
+    return true
+  } else if (node.type === 'SHAPE_WITH_TEXT') {
+    // Drawing sizes a new shape rather than resizing it, so it grows to fit its label.
+    preview.update(node.id, {
+      ...(clicked && { width: SHAPE_WITH_TEXT_SIZE, height: SHAPE_WITH_TEXT_SIZE }),
+      shapeTruncates: false
+    })
   } else if (clicked) {
     preview.update(node.id, { width: 100, height: 100 })
   }
   return clicked
+}
+
+/** A new text, or a new shape's label, takes typing at once, as in FigJam. */
+function startTyping(editor: Editor, node: SceneNode) {
+  const typed = node.type === 'TEXT' ? node : generatedFrameText(editor.graph, node)
+  if (typed) editor.startTextEditing(typed.id)
 }
 
 function createDraw(
@@ -97,7 +130,9 @@ function createDraw(
   nodeId: string,
   startX: number,
   startY: number,
-  toLocal: DragDraw['toLocal']
+  toLocal: DragDraw['toLocal'],
+  line: boolean,
+  snap: DragDraw['snap']
 ): DragDraw {
   const graph = editor.graph
   const preview = editor.beginNodePreview('Draw dimensions')
@@ -125,6 +160,8 @@ function createDraw(
       // Drawn into auto layout, the layer joins the flow at the end.
       const parent = graph.getNode(node?.parentId ?? '')
       if (parent && parent.layoutMode !== 'NONE') editor.runLayoutForNode(parent.id)
+      // A shape with text lays its label out in the size it was drawn at.
+      if (node?.type === 'SHAPE_WITH_TEXT') editor.runLayoutForNode(node.id)
       // A frame made by a click, not drawn over anything, takes nothing in.
       if (node?.type === 'SECTION' || (node?.type === 'FRAME' && !clicked)) {
         editor.adoptCoveredLayers(node.id)
@@ -136,7 +173,7 @@ function createDraw(
       throw error
     }
     editor.setTool('SELECT')
-    if (node?.type === 'TEXT') editor.startTextEditing(node.id)
+    if (node) startTyping(editor, node)
   }
 
   // Creation itself is already an edit: avoid rebuilding the backing on the first held frame.
@@ -152,6 +189,8 @@ function createDraw(
     startX,
     startY,
     toLocal,
+    line,
+    snap,
     nodeId,
     update: (changes) => {
       if (!finished) preview.update(nodeId, changes)

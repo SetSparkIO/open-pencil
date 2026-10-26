@@ -1,4 +1,5 @@
-import type { GUID, NodeChange } from '@open-pencil/kiwi/fig/codec'
+import type { GUID } from '@open-pencil/kiwi/fig'
+import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
 import { guidToString } from '@open-pencil/kiwi/fig/guid'
 
 import { parentIdOf } from '../instance-overrides/source-index'
@@ -7,6 +8,27 @@ interface LinkedPropertyDefinition {
   id?: GUID
   parentPropDefId?: GUID
   [field: string]: unknown
+}
+
+/**
+ * A record's property definitions with each that names a parent definition completed from the
+ * nearest ancestor holding it. `ancestors` run outward and have their own inheritance applied.
+ */
+export function inheritFromAncestors(node: NodeChange, ancestors: readonly NodeChange[]): void {
+  const definitions = node.componentPropDefs as LinkedPropertyDefinition[] | undefined
+  if (!definitions) return
+  node.componentPropDefs = definitions.map((definition) => {
+    if (!definition.parentPropDefId) return definition
+    const id = guidToString(definition.parentPropDefId)
+    for (const ancestor of ancestors) {
+      const matches = (
+        (ancestor.componentPropDefs as LinkedPropertyDefinition[] | undefined) ?? []
+      ).filter((candidate) => candidate.id && guidToString(candidate.id) === id)
+      if (matches.length > 1) throw new Error(`Ambiguous parent property ${id}`)
+      if (matches.length === 1) return { ...structuredClone(matches[0]), ...definition }
+    }
+    throw new Error(`Missing parent property ${id}`)
+  })
 }
 
 /** Resolve definition inheritance only within the source node's ancestry. */
@@ -31,20 +53,7 @@ export function inheritComponentPropertyDefinitions(
       ancestors.push(parent)
       parent = sources.get(parentIdOf(parent) ?? '')
     }
-    const definitions = node.componentPropDefs as LinkedPropertyDefinition[] | undefined
-    if (definitions)
-      node.componentPropDefs = definitions.map((definition) => {
-        if (!definition.parentPropDefId) return definition
-        const id = guidToString(definition.parentPropDefId)
-        for (const ancestor of ancestors) {
-          const matches = (
-            (ancestor.componentPropDefs as LinkedPropertyDefinition[] | undefined) ?? []
-          ).filter((candidate) => candidate.id && guidToString(candidate.id) === id)
-          if (matches.length > 1) throw new Error(`Ambiguous parent property ${id}`)
-          if (matches.length === 1) return { ...structuredClone(matches[0]), ...definition }
-        }
-        throw new Error(`Missing parent property ${id}`)
-      })
+    inheritFromAncestors(node, ancestors)
     pending.delete(node)
     complete.add(node)
   }

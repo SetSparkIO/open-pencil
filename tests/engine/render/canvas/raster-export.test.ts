@@ -1,13 +1,21 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 
-import { renderNodesToImage, SceneGraph, SkiaRenderer } from '@open-pencil/core'
-import { getWorldMatrix } from '@open-pencil/scene-graph'
+import type { Canvas } from 'canvaskit-wasm'
+
+import { SkiaRenderer } from '@open-pencil/core/canvas'
+import { renderNodesToImage } from '@open-pencil/core/io/formats/raster'
+import { SceneGraph } from '@open-pencil/scene-graph'
+import { getWorldMatrix } from '@open-pencil/scene-graph/coordinate'
+import { pixelLength } from '@open-pencil/scene-graph/text'
 
 import { initCanvasKit } from '#cli/headless'
+import { NodePathCaches } from '#core/canvas/paths/cache'
+import { renderSceneToCanvas } from '#core/canvas/renderer/pipeline'
 import { prepareSelectionRenderGraph } from '#core/io/formats/raster/render'
 import { extractExportGraph } from '#core/io/subgraph'
 
 import { expectDefined } from '#tests/helpers/assert'
+import { asDouble } from '#tests/helpers/doubles'
 
 let ck: Awaited<ReturnType<typeof initCanvasKit>>
 
@@ -36,6 +44,27 @@ beforeAll(async () => {
 })
 
 describe('raster export', () => {
+  test('full-resolution rendering disables previews and restores viewport/mode even on failure', () => {
+    const graph = new SceneGraph()
+    const page = graph.getPages()[0]
+    graph.createNode('RECTANGLE', page.id)
+    const viewport = { x: 1, y: 2, w: 3, h: 4 }
+    const renderer = {
+      viewportImageRendering: true,
+      worldViewport: viewport,
+      nodePaths: new NodePathCaches(),
+      renderNode() {
+        expect(this.viewportImageRendering).toBe(false)
+        throw new Error('drawing failed')
+      }
+    }
+    expect(() => renderSceneToCanvas(renderer, asDouble<Canvas>({}), graph, page.id)).toThrow(
+      'drawing failed'
+    )
+    expect(renderer.viewportImageRendering).toBe(true)
+    expect(renderer.worldViewport).toBe(viewport)
+  })
+
   test('preserves transformed top-level nodes when preparing a page export', () => {
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
@@ -216,7 +245,7 @@ describe('raster export', () => {
       height: 40,
       text: 'Primitives',
       fontSize: 30,
-      lineHeight: 40,
+      lineHeight: pixelLength(40),
       fills: [
         {
           type: 'SOLID',

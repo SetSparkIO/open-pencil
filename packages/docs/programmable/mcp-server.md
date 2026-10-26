@@ -15,7 +15,13 @@ Tool definitions own native Valibot input schemas, execution/mutation metadata, 
 
 Use **Settings → Tool access** (select **Local MCP**) to search and toggle the local server's tools, individually or by read-only/side-effect group. Group switches affect all group members, even during search. **Restore defaults** enables the configurable MCP tools again. Existing MCP preferences are preserved separately from the **Built-in AI** settings.
 
-Restart the MCP server, then reconnect stdio clients, to apply changes. For an externally managed server, restart its owning process. The list reflects the tools discovered from the server; disabling a dedicated tool does not prevent an enabled script tool from performing the same operation. These switches are not a sandbox and do not configure remote MCP servers or WebMCP.
+Restart the MCP server, then reconnect stdio clients, to apply changes. For an externally managed server, restart its owning process. The list shows the tools the server offers, also while it is stopped; disabling a dedicated tool does not prevent an enabled script tool from performing the same operation. These switches are not a sandbox and do not configure remote MCP servers or WebMCP.
+
+## Share only the selection {#selection-scope}
+
+Turn on **Share only the selection** in **Settings → MCP → Local server** to let MCP clients read only the layers you select. Clients then get `get_selection`, `get_node`, `get_page_tree`, `describe`, and `export_image`, and no tools that edit, open files, list documents, or change settings. Every node a call names must be a selected layer or inside one; `describe` and `export_image` read the selection when given no IDs, and `get_page_tree` needs a `root_id` from the selection. `export_image` returns the image but cannot write it to a file. With nothing selected, calls fail and ask the user to select layers.
+
+The server enforces this on every call it sends to the app, including `POST /rpc` and stdio clients, so a client cannot widen it. Restart the MCP server to apply the change. For a server you start yourself, set `OPENPENCIL_MCP_SCOPE=selection`; a stdio client can also set it to limit itself while the server shares the whole document.
 
 ## Browser-native WebMCP (experimental) {#webmcp}
 
@@ -130,6 +136,7 @@ Security defaults:
 - Authentication is enabled by default with a generated token stored in the private discovery file.
 - `eval` is disabled.
 - File operations are limited to `OPENPENCIL_MCP_ROOT` (defaults to the current working directory) and reject symlink escapes.
+- The browser app reaches those files through the server: `open_file` reads one, and `save_file` or `new_document` with a path writes a copy, so a document opened in the browser keeps saving where it did before.
 - Only the desktop app's own origin (`tauri://localhost` and its `http(s)://tauri.localhost` variants) is allowed by default, so a server you start yourself works from the app without extra configuration. Set `OPENPENCIL_MCP_CORS_ORIGIN` to a comma-separated list to allow other origins, such as a worktree dev server.
 
 Set `PORT=0` to disable TCP on macOS and Linux. Windows requires TCP. Set `OPENPENCIL_MCP_SOCKET` to override the Unix socket path, or `OPENPENCIL_MCP_DISCOVERY_PATH` to override the discovery file location. To provide a stable token, set `OPENPENCIL_MCP_AUTH_TOKEN`; an explicitly empty value disables authentication and should only be used with a trusted local socket.
@@ -143,7 +150,7 @@ Endpoints are available over both active transports:
 ## Workflow
 
 1. **Discover targets** — call `list_documents` first when more than one document or page may be open. It returns stable `document_id` and page IDs.
-2. **Open** — `open_file` to load an existing `.fig`, or `new_document` for a blank canvas. These return target metadata for the opened or created document.
+2. **Open** — `open_file` to load an existing `.fig`, or `new_document` for a blank canvas. `list_recent_files` lists recently opened files inside the MCP root to reopen. These return target metadata for the opened or created document.
 3. **Read** — `get_page_tree`, `find_nodes`, `get_node`, `list_pages`
 4. **Create** — `create_shape`, `render` (JSX)
 5. **Modify** — `set_fill`, `set_stroke`, `set_layout`, `update_node`, `set_effects`
@@ -152,6 +159,8 @@ Endpoints are available over both active transports:
 8. **Close** — `close_file` to close an open document tab. With unsaved changes it fails unless `unsaved` is `"save"` or `"discard"`; it never prompts in the app.
 
 `undo` and `redo` step back through the agent's own changes, and `activate_document` brings a tab to the front when the user should see it.
+
+Each MCP session shows in the app as an agent with a callsign, like the built-in chat: its cursor and outline sit on the layers each tool reads or changes, it rests after a quiet spell and leaves when the session ends, and people can follow it from their avatar. Collaborators in a shared room see it too.
 
 Most tools accept optional `document_id` and `page_id` fields. Pass them explicitly for agent workflows instead of relying on the visible active tab/page. `create_page` only creates a page; call `switch_page` separately when the workflow should change the active page.
 
@@ -178,6 +187,7 @@ OpenPencil currently registers 100+ shared design tools, plus MCP-only document 
 | `save_file` | Save the current document to a `.fig` file |
 | `new_document` | Create a new empty document |
 | `list_documents` | List open app documents/tabs and their pages |
+| `list_recent_files` | List recently opened files inside the MCP root, newest first, up to the app's recent files limit |
 | `activate_document` | Bring a document tab to the front, optionally on a given page |
 
 ### History
@@ -202,7 +212,7 @@ Settings tools never expose credentials, AI models, MCP connections, storage, or
 
 | Tool | Description |
 |------|-------------|
-| `get_selection` | Get currently selected nodes |
+| `get_selection` | Get the selected nodes, with their direct children by default; `depth` sets how many levels |
 | `get_page_tree` | Get the full node tree of the current page |
 | `get_current_page` | Get the current page name and ID |
 | `get_node` | Get detailed properties of a node by ID |
@@ -228,10 +238,14 @@ Settings tools never expose credentials, AI models, MCP connections, storage, or
 | `create_shape` | Create a shape (`FRAME`, `RECTANGLE`, `ELLIPSE`, `TEXT`, `LINE`, `STAR`, `POLYGON`, `SECTION`) |
 | `create_vector` | Create a vector node from a path string |
 | `create_slice` | Create an export slice |
+| `create_connector` | Join two layers, or a layer and a point, with a connector that follows them |
 | `create_page` | Create a new page |
 | `render` | Render JSX to design nodes — create entire component trees in one call |
 | `create_component` | Convert a frame/group into a component |
 | `create_instance` | Create an instance of a component |
+| `create_slot` | Make a frame inside a main component a slot |
+| `set_behaviour` | Make a component behave as a Reka UI control, by its property and slot names; `null` removes it |
+| `get_behaviour` | Read a component's behaviour and what it still misses; without an ID, list every kind |
 | `node_to_component` | Convert an existing node into a component in-place |
 
 ### Modify
@@ -339,6 +353,22 @@ Settings tools never expose credentials, AI models, MCP connections, storage, or
 | `diff_show` | Preview the patch that setting JSX attributes on a node would produce |
 | `diff_apply` | Apply a patch after checking the nodes still match its old values |
 | `diff_visual` | Pixel diff between two rendered nodes, returned as an image |
+
+### Comments
+
+| Tool | Description |
+|------|-------------|
+| `get_comments` | Read the comments left on the canvas, open ones unless asked for resolved too, with their layer, page, and replies |
+| `add_comment` | Pin a comment on a layer or at a point of a page, in Markdown |
+| `reply_to_comment` | Answer a thread, which reopens it if it was resolved |
+| `resolve_comment` | Resolve a thread once its feedback is addressed, or reopen it |
+
+### Statuses
+
+| Tool | Description |
+|------|-------------|
+| `get_statuses` | List the document's statuses and the sections, frames, components, and instances that show one, optionally only one status |
+| `set_status` | Give a layer one of the document's statuses by name, or clear it |
 
 ### Navigation
 

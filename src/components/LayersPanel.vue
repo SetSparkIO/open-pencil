@@ -3,7 +3,8 @@ import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
 import { tv } from 'tailwind-variants'
 import { computed, ref } from 'vue'
 
-import { useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
+import { vTestId } from '@open-pencil/vue/testing'
 
 import AppMenu from '@/components/shell/AppMenu.vue'
 import SegmentedControl from '@/components/ui/select/SegmentedControl.vue'
@@ -45,9 +46,7 @@ const splitterStyles = tv(splitterTheme)({ direction: 'vertical' })
       >
         <template #option="{ option }">
           <span
-            :data-test-id="
-              option.value === 'file' ? 'left-panel-layers-tab' : 'left-panel-assets-tab'
-            "
+            v-test-id="option.value === 'file' ? 'left-panel-layers-tab' : 'left-panel-assets-tab'"
             class="truncate"
           >
             {{ option.label }}

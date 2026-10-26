@@ -1,9 +1,11 @@
 import { shallowReactive } from 'vue'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { createEditor } from '@open-pencil/core'
 import { BUILTIN_IO_FORMATS, IORegistry } from '@open-pencil/core/io'
 import { SceneGraph } from '@open-pencil/scene-graph'
+import { createShaderRasterizer } from '@open-pencil/vue/canvas/surface'
 
+import { useCollabIdentity } from '@/app/collab/identity'
 import { recordPreparationOutcome } from '@/app/diagnostics'
 import {
   getActiveEditorStore,
@@ -13,6 +15,7 @@ import {
 import { resolveFigmaClipboardImages } from '@/app/editor/clipboard/figma-images'
 import { bindClipboardNotifications } from '@/app/editor/clipboard/notifications'
 import { loadFont } from '@/app/editor/fonts'
+import { appIcons } from '@/app/editor/icons/provider'
 import { createRecentPages } from '@/app/editor/pages/recent'
 import { createCanvasPaneRegistry } from '@/app/editor/panes/registry'
 import { createEditorPreparationController } from '@/app/editor/preparation/controller'
@@ -21,7 +24,7 @@ import {
   type EditorPreparationEventName,
   type EditorPreparationEvents
 } from '@/app/editor/preparation/events'
-import type { EditorPreparationHandle } from '@/app/editor/preparation/types'
+import { pageProgressUnit, type EditorPreparationHandle } from '@/app/editor/preparation/types'
 import {
   createEditorComputedRefs,
   createEditorStoreModules,
@@ -34,8 +37,8 @@ import { createDeferred } from '@/app/runtime/deferred'
 import { toast } from '@/app/shell/ui'
 import { IS_BROWSER, IS_TAURI } from '@/constants'
 
-export { EDITOR_TOOLS as TOOLS, TOOL_SHORTCUTS } from '@open-pencil/core/editor'
-export type { EditorToolDef as ToolDef, Tool } from '@open-pencil/core/editor'
+export { EDITOR_TOOLS as TOOLS, TOOL_SHORTCUTS } from '@open-pencil/core'
+export type { EditorToolDef as ToolDef, Tool } from '@open-pencil/core'
 
 function buildEditorStore(initialGraph?: SceneGraph) {
   const graph = initialGraph ?? new SceneGraph()
@@ -47,8 +50,11 @@ function buildEditorStore(initialGraph?: SceneGraph) {
     graph,
     state,
     loadFont,
+    icons: appIcons,
+    shaderRasterizer: createShaderRasterizer(),
     resolveFigmaClipboardImages: IS_TAURI ? resolveFigmaClipboardImages : undefined,
     skipInitialGraphSetup: !!initialGraph,
+    getUserName: () => useCollabIdentity().name.value,
     getViewportSize: () =>
       viewportSize.width > 0 && viewportSize.height > 0
         ? viewportSize
@@ -135,12 +141,6 @@ function buildEditorStore(initialGraph?: SceneGraph) {
 
   const panes = createCanvasPaneRegistry(state)
 
-  function progressUnit(phase: string): 'fonts' | 'pages' | undefined {
-    if (phase === 'resolving-fonts') return 'fonts'
-    if (phase === 'populating-page') return 'pages'
-    return undefined
-  }
-
   async function switchPage(
     pageId: string,
     options: {
@@ -169,7 +169,7 @@ function buildEditorStore(initialGraph?: SceneGraph) {
           options.onProgress?.(progress)
           preparation.update({
             ...progress,
-            unit: progressUnit(progress.phase)
+            unit: pageProgressUnit(progress.phase)
           })
         }
       })

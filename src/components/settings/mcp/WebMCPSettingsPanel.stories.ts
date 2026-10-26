@@ -1,14 +1,15 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { ref } from 'vue'
 
-import { getWebMCPTools, type WebMCPMode } from '@/app/automation/webmcp/policy'
+import { getWebMCPTools } from '@/app/automation/webmcp/policy'
+import { type WebMCPMode } from '@/app/automation/webmcp/schema'
 import type { WebMCPRuntimeState } from '@/app/automation/webmcp/service'
 
 import WebMCPSettingsPanel from './WebMCPSettingsPanel.vue'
 
 type Args = { modelValue: WebMCPMode; state: WebMCPRuntimeState }
 const meta = {
-  title: 'Settings/MCP/WebMCP',
+  title: 'App/Settings/MCP/WebMCP',
   args: { modelValue: 'off', state: { status: 'off', toolCount: 0, error: null } },
   render: (args) => ({
     components: { WebMCPSettingsPanel },

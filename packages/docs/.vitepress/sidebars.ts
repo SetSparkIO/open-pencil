@@ -8,6 +8,8 @@ export const guideSidebar = (prefix: string, labels: SidebarLabels): DefaultThem
       { text: labels.gettingStarted, link: `${prefix}/getting-started` },
       { text: labels.features, link: `${prefix}/overview/features` },
       { text: labels.comparison, link: `${prefix}/overview/comparison` },
+      // English only until translated; locales link to the canonical page.
+      { text: labels.privacy, link: '/overview/privacy' },
     ],
   },
 ]
@@ -31,6 +33,8 @@ export const userGuideSidebar = (
       { text: labels.text, link: `${prefix}/user-guide/text-editing` },
       { text: labels.pen, link: `${prefix}/user-guide/pen-tool` },
       { text: labels.vectorEditing, link: `${prefix}/user-guide/vector-edit` },
+      // English only until translated; locales link to the canonical page.
+      { text: labels.icons, link: '/user-guide/icons' },
     ],
   },
   {
@@ -38,6 +42,9 @@ export const userGuideSidebar = (
     items: [
       { text: labels.layers, link: `${prefix}/user-guide/layers-and-pages` },
       { text: labels.exporting, link: `${prefix}/user-guide/exporting` },
+      // English only until translated; locales link to the canonical page.
+      { text: labels.openPencilCloud, link: '/user-guide/openpencil-cloud' },
+      { text: labels.cloudStorage, link: '/user-guide/cloud-storage' },
     ],
   },
   {
@@ -74,6 +81,7 @@ export const programmableSidebar = (
       { text: labels.aiChat, link: `${prefix}/programmable/ai-chat` },
       ...(!prefix
         ? [
+            { text: 'Coding agents', link: '/programmable/coding-agents' },
             {
               text: 'BYOK Compatibility',
               link: '/programmable/byok-provider-compatibility',
@@ -100,6 +108,7 @@ export const referenceSidebar = (
       { text: labels.figmaMatrix, link: `${prefix}/reference/figma-compatibility` },
       ...(!prefix ? [{ text: 'DOM/CSS Mapping', link: '/reference/dom-css-mapping' }] : []),
       { text: 'File Format', link: '/reference/file-format' },
+      { text: 'Self-hosting Cloud', link: '/reference/self-hosting-cloud' },
     ],
   },
 ]
@@ -120,6 +129,9 @@ export const developmentSidebar = (
       ...(!prefix
         ? [
             { text: 'Roadmap', link: '/development/roadmap' },
+            { text: 'AI Chat Replies', link: '/development/ai-chat' },
+            { text: 'Behaviours and Preview', link: '/development/behaviours-and-preview' },
+            { text: 'Cloud Architecture', link: '/development/cloud' },
             { text: 'Navigation Performance', link: '/development/navigation-performance' },
             { text: 'Renderer Lifecycle', link: '/development/renderer-lifecycle' },
             { text: 'Renderer Profiler', link: '/development/renderer-profiler' },

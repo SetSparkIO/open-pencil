@@ -15,6 +15,22 @@ const retiringWorker: Partial<VitePWAOptions> = {
 }
 
 /**
+ * Pages that are not the editor's: OAuth callbacks, which relay a redirect, and, where a Cloud
+ * server serves the editor, its API and its own pages, `CLOUD_PORTAL_PAGE_ROOTS` in
+ * `@open-pencil/cloud/contract`, which loads only once packages are built. Workbox matches the
+ * path with its query, so a page root may be followed by `?` as well as `/`.
+ */
+export const NOT_EDITOR_PAGES = [
+  /^\/oauth\//,
+  // A sign-in proxy in front of the editor (oauth2-proxy, for one) owns /oauth2/*. Its
+  // callback must reach the server, not the cached shell, or the sign-in never finishes.
+  /^\/oauth2\//,
+  /^\/api\//,
+  /^\/\.well-known\//,
+  /^\/(?:welcome|auth|account|admin)(?:[/?]|$)/
+]
+
+/**
  * With `serviceWorker` false (`VITE_OPENPENCIL_SERVICE_WORKER=off`) the build emits the
  * retiring worker as `/sw.js` in place of the Workbox worker, and `boot.ts` registers nothing.
  */
@@ -27,9 +43,7 @@ export function openPencilPwaPlugin({ serviceWorker = true }: { serviceWorker?: 
       maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
       globPatterns: ['**/*.{js,css,html,wasm,png,svg,ico,ttf,webmanifest}'],
       navigateFallback: '/index.html',
-      // A sign-in proxy in front of the editor (oauth2-proxy, for one) owns /oauth2/*. Its
-      // callback must reach the server, not the cached shell, or the sign-in never finishes.
-      navigateFallbackDenylist: [/^\/oauth2\//]
+      navigateFallbackDenylist: NOT_EDITOR_PAGES
     },
     manifest: {
       name: 'OpenPencil',

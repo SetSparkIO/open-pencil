@@ -1,16 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
+import { isCloudBinding } from '@/app/cloud/integration'
 import { COLLABORATION_AVAILABLE } from '@/app/collab/availability'
+import { useEditorStore } from '@/app/editor/active-store'
+import { CloudShareButton } from '@/components/cloud/integration'
 import CollabAvatarStack from '@/components/collab-panel/CollabAvatarStack.vue'
 import CollabSharePopover from '@/components/collab-panel/CollabSharePopover.vue'
 import { provideCollabPanel } from '@/components/collab-panel/context'
+import VoiceCallControl from '@/components/voice-call/VoiceCallControl.vue'
 
-provideCollabPanel()
+const collab = provideCollabPanel()
+const store = useEditorStore()
+// Cloud documents share through their server; everything else through a peer-to-peer room.
+const cloud = computed(() => isCloudBinding(store.getStorageBinding()))
 </script>
 
 <template>
-  <div class="flex w-full items-center justify-end gap-2">
+  <div class="flex w-full items-center justify-end gap-1.5">
     <CollabAvatarStack />
+    <VoiceCallControl v-if="collab.state.inRoom" :people="collab.callRows" />
     <div class="flex-1" />
-    <CollabSharePopover v-if="COLLABORATION_AVAILABLE" />
+    <CloudShareButton v-if="cloud" />
+    <CollabSharePopover v-else-if="COLLABORATION_AVAILABLE" />
   </div>
 </template>

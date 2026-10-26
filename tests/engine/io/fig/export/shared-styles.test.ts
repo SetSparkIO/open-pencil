@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 
-import { exportFigFile, initCodec } from '@open-pencil/core'
+import { exportFigFile } from '@open-pencil/core/io/formats/fig'
 import { parseFigBuffer } from '@open-pencil/fig'
+import { sceneNodeToKiwi } from '@open-pencil/fig/node-change'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
 import { SceneGraph } from '@open-pencil/scene-graph'
-
-import { sceneNodeToKiwi } from '#core/kiwi/fig/node-change/serialize'
 
 import { uint8ArrayToArrayBuffer } from '#tests/helpers/fig/fixtures'
 
@@ -36,7 +36,16 @@ describe('Figma shared style export', () => {
       styleIdForText: { guid: { sessionID: 1, localID: 12 } },
       styleIdForEffect: { guid: { sessionID: 1, localID: 13 } },
       styleIdForGrid: { guid: { sessionID: 1, localID: 14 } },
-      layoutGrids: [{ pattern: 'COLUMNS', count: 12, gutterSize: 16, visible: true }]
+      layoutGrids: [
+        {
+          pattern: 'STRIPES',
+          axis: 'X',
+          type: 'STRETCH',
+          numSections: 12,
+          gutterSize: 16,
+          visible: true
+        }
+      ]
     })
   })
 

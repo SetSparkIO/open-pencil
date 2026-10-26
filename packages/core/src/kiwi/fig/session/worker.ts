@@ -1,4 +1,7 @@
+import { loadFigDataDecompressor } from '@open-pencil/kiwi/fig/container'
+
 import { serializeSceneGraph } from '#core/kiwi/fig/parse/transfer'
+import { createFigArchiveOperations } from '#core/kiwi/fig/session/archive/access'
 import type {
   FigSessionOpenRequest,
   FigSessionRequest,
@@ -7,8 +10,11 @@ import type {
 import { openReaderSession } from '#core/kiwi/fig/session/reader'
 
 let session: ReturnType<typeof openReaderSession> | undefined
-let originalArchive: Uint8Array | undefined
+let archive: ReturnType<typeof createFigArchiveOperations> | undefined
 let port: MessagePort | undefined
+
+/** How often a page load reports that it is still advancing. */
+const PROGRESS_INTERVAL_MS = 1000
 
 function respond(message: FigSessionResponse): void {
   port?.postMessage(message)
@@ -16,7 +22,14 @@ function respond(message: FigSessionResponse): void {
 
 function populate(request: Extract<FigSessionRequest, { type: 'populate' }>): void {
   if (!session) throw new Error('FIG session has no retained reader')
-  const result = session.populate(request.pageId)
+  const { requestId } = request
+  let reportedAt = performance.now()
+  const result = session.populate(request.pageId, () => {
+    const now = performance.now()
+    if (now - reportedAt < PROGRESS_INTERVAL_MS) return
+    reportedAt = now
+    respond({ type: 'population-progress', requestId })
+  })
   respond({
     type: 'population-result',
     requestId: request.requestId,
@@ -25,19 +38,50 @@ function populate(request: Extract<FigSessionRequest, { type: 'populate' }>): vo
   })
 }
 
+type ArchiveRequest = Extract<
+  FigSessionRequest,
+  { type: 'original-archive' | 'archive-info' | 'component-pages' | 'patch-archive' }
+>
+
+async function answerArchiveRequest(request: ArchiveRequest): Promise<void> {
+  const { requestId } = request
+  try {
+    if (!archive) throw new Error('FIG session has no original archive')
+    if (request.type === 'original-archive') {
+      const bytes = archive.original()
+      port?.postMessage({ type: 'original-archive-result', requestId, bytes }, [bytes.buffer])
+    } else if (request.type === 'archive-info') {
+      respond({ type: 'archive-info-result', requestId, info: archive.info() })
+    } else if (request.type === 'component-pages') {
+      const pageIds = archive.componentPages(request.componentIds)
+      respond({ type: 'component-pages-result', requestId, pageIds })
+    } else {
+      const bytes = await archive.patch(request.patch, request.input)
+      port?.postMessage({ type: 'patch-archive-result', requestId, bytes }, [bytes.buffer])
+    }
+  } catch (error) {
+    respond({
+      type: 'archive-error',
+      requestId,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+}
+
 function handleRequest(request: FigSessionRequest): void {
   try {
-    if (request.type === 'original-archive') {
-      if (!originalArchive) throw new Error('FIG session has no original archive')
-      const bytes = originalArchive.slice()
-      port?.postMessage({ type: 'original-archive-result', requestId: request.requestId, bytes }, [
-        bytes.buffer
-      ])
+    if (
+      request.type === 'original-archive' ||
+      request.type === 'archive-info' ||
+      request.type === 'component-pages' ||
+      request.type === 'patch-archive'
+    ) {
+      void answerArchiveRequest(request)
       return
     }
     if (request.type === 'dispose') {
       session = undefined
-      originalArchive = undefined
+      archive = undefined
       respond({ type: 'disposed' })
       port?.close()
       port = undefined
@@ -45,6 +89,10 @@ function handleRequest(request: FigSessionRequest): void {
       return
     }
     if (request.type === 'cancel') return
+    if (request.type === 'retire') {
+      session = undefined
+      return
+    }
     populate(request)
   } catch (error) {
     respond({
@@ -55,14 +103,18 @@ function handleRequest(request: FigSessionRequest): void {
   }
 }
 
-self.onmessage = (event: MessageEvent<FigSessionOpenRequest>) => {
+self.onmessage = async (event: MessageEvent<FigSessionOpenRequest>) => {
   const request = event.data
   port = request.port
   port.onmessage = (message: MessageEvent<FigSessionRequest>) => handleRequest(message.data)
   port.start()
-  originalArchive = new Uint8Array(request.archiveBuffer)
+  // The worker copies the archive itself, so the main thread sends the file once.
+  const archiveBytes = request.buffer.slice(0)
   try {
-    const opened = openReaderSession(request.originalBuffer, request.options?.populate)
+    await loadFigDataDecompressor()
+    const opened = openReaderSession(request.buffer, request.options?.populate)
+    const archiveInfo = opened.session.archiveRecordInfo()
+    archive = createFigArchiveOperations(archiveBytes, () => archiveInfo)
     respond({ type: 'page-manifest', pages: opened.pages })
     session =
       request.options?.populate === 'first-page' || request.options?.populate === 'none'
@@ -71,7 +123,8 @@ self.onmessage = (event: MessageEvent<FigSessionOpenRequest>) => {
     respond({
       type: 'graph',
       graph: serializeSceneGraph(opened.graph),
-      checkpoint: opened.checkpoint()
+      checkpoint: opened.checkpoint(),
+      archiveInfo
     })
   } catch (error) {
     respond({ type: 'graph', error: error instanceof Error ? error.message : String(error) })

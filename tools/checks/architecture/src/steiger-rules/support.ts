@@ -46,9 +46,14 @@ export const PACKAGE_ALIASES: Record<string, string> = {
   '#core-tests/': 'packages/core/tests/',
   '#fig/': 'packages/fig/src/',
   '#fig-tests/': 'packages/fig/tests/',
+  '#dom-css-tests/': 'packages/dom-css/tests/',
   '#vue/': 'packages/vue/src/',
   '#cli/': 'packages/cli/src/',
-  '#mcp/': 'packages/mcp/src/'
+  '#mcp/': 'packages/mcp/src/',
+  '#feedback/': 'packages/feedback/src/',
+  '#feedback-tests/': 'packages/feedback/tests/',
+  '#cloud/': 'packages/cloud/src/',
+  '#cloud-tests/': 'packages/cloud/tests/'
 }
 
 export const PACKAGE_ALIAS_OWNERS: Record<string, string> = {
@@ -58,9 +63,14 @@ export const PACKAGE_ALIAS_OWNERS: Record<string, string> = {
   '#core-tests/': 'packages/core/tests/',
   '#fig/': 'packages/fig/',
   '#fig-tests/': 'packages/fig/tests/',
+  '#dom-css-tests/': 'packages/dom-css/tests/',
   '#vue/': 'packages/vue/',
   '#cli/': 'packages/cli/',
-  '#mcp/': 'packages/mcp/src/'
+  '#mcp/': 'packages/mcp/',
+  '#feedback/': 'packages/feedback/',
+  '#feedback-tests/': 'packages/feedback/tests/',
+  '#cloud/': 'packages/cloud/',
+  '#cloud-tests/': 'packages/cloud/tests/'
 }
 
 function normalizePath(filePath: string) {
@@ -184,8 +194,12 @@ export function createImportRule(
   }
 }
 
+/** A file's name without its test kind and extension: `email-runtime.test.ts` is `email-runtime`. */
+export function fileStem(filePath: string): string {
+  return path.basename(filePath).replace(/\.(test|spec|bench)?\.?[cm]?[tj]sx?$|\.vue$/, '')
+}
+
 export function filePrefix(filePath: string): string | null {
-  const name = path.basename(filePath).replace(/\.(test|spec|bench)?\.?[cm]?[tj]sx?$|\.vue$/, '')
-  const match = /^([a-z][a-z0-9]+)-[a-z0-9-]+$/.exec(name)
+  const match = /^([a-z][a-z0-9]+)-[a-z0-9-]+$/.exec(fileStem(filePath))
   return match?.[1] ?? null
 }

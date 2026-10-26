@@ -1,5 +1,8 @@
+import { isEqual } from 'es-toolkit/predicate'
+
 import type { NodeChange, Paint } from '@open-pencil/kiwi/fig/codec'
-import { setInstanceOverride, type SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
+import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { setInstanceOverride } from '@open-pencil/scene-graph/instances/overrides'
 import { createDefaultSourceMetadata } from '@open-pencil/scene-graph/node-defaults'
 
 import { nodeChangeToProps } from '../node-change'
@@ -26,6 +29,42 @@ function occurrenceMetadata(
   return metadata
 }
 
+/**
+ * Fields a layer keeps its own: its children, and state written in place, such as its source
+ * metadata and its override maps.
+ */
+const OWN_FIELDS = new Set(['childIds', 'source', 'instanceOverrides'])
+
+/** Maps and sets are written in place, so values holding them are never shared. */
+function holdsCollections(value: unknown): boolean {
+  if (value instanceof Map || value instanceof Set) return true
+  if (value === null || typeof value !== 'object' || ArrayBuffer.isView(value)) return false
+  return Object.values(value).some(holdsCollections)
+}
+
+/**
+ * A layer inside an instance holds what its component's layer holds unless an override changed
+ * it. Each equal value is the component layer's own object rather than a copy, so a design kit's
+ * many instances do not each repeat their components' paints, glyphs, and defaults. Values are
+ * replaced, never written into, once loaded; loading writes only into fields a layer keeps.
+ */
+function shareUnchanged(node: SceneNode, source: SceneNode): void {
+  for (const field of Object.keys(node)) {
+    if (OWN_FIELDS.has(field)) continue
+    const value: unknown = Reflect.get(node, field)
+    const original: unknown = Reflect.get(source, field)
+    if (value === original || value === null || typeof value !== 'object') continue
+    if (holdsCollections(value) || !isEqual(value, original)) continue
+    Reflect.set(node, field, original)
+  }
+  // The layer's source metadata is its own, but the layout Figma saved for it is replaced whole,
+  // never written into, and nearly always the component layer's.
+  const layout = node.source.fig.layout
+  const originalLayout = source.source.fig.layout
+  if (layout && layout !== originalLayout && isEqual(layout, originalLayout))
+    node.source.fig.layout = originalLayout
+}
+
 export interface MaterializedInstance {
   root: SceneNode
   /** Occurrence object identity distinguishes repeated uses of a source node. */
@@ -44,6 +83,11 @@ export interface MaterializeInstanceOptions {
   sourceChildren?: ReadonlyMap<InstanceOccurrence, string>
   /** Nodes to update in place rather than create, keyed by occurrence. */
   existingNodes?: ReadonlyMap<InstanceOccurrence, SceneNode>
+  /**
+   * The id to create a layer under that is a record of its own, not a copy inside an instance:
+   * its saved GUID, so it keeps one id across loads. Undefined creates it under a fresh id.
+   */
+  recordId?: (occurrence: InstanceOccurrence) => string | undefined
 }
 
 /** A document or a variable is a resource record, never a node in an expansion. */
@@ -62,7 +106,7 @@ export function materializeInstance(
   components: ReadonlyMap<string, string>,
   options: MaterializeInstanceOptions = {}
 ): MaterializedInstance {
-  const { blobs = [], sourceChildren = new Map(), existingNodes = new Map() } = options
+  const { blobs = [], sourceChildren = new Map(), existingNodes = new Map(), recordId } = options
   if (!graph.getNode(parentId)) throw new Error('Missing materialization parent')
   const prepared = new Map<InstanceOccurrence, ReturnType<typeof nodeChangeToProps>>()
   const validate = (current: InstanceOccurrence): void => {
@@ -106,6 +150,19 @@ export function materializeInstance(
       }
     }
   }
+  /** A record of its own takes its saved GUID, and a copy inside an instance a fresh id. */
+  const createLayer = (
+    current: InstanceOccurrence,
+    nodeType: SceneNode['type'],
+    parent: string,
+    props: Partial<SceneNode>,
+    owner: SceneNode | undefined
+  ): SceneNode => {
+    const id = owner ? undefined : recordId?.(current)
+    return id
+      ? graph.createNodeWithId(id, nodeType, parent, props)
+      : graph.createNode(nodeType, parent, props)
+  }
   const create = (current: InstanceOccurrence, parent: string, owner?: SceneNode): SceneNode => {
     const converted = prepared.get(current)
     if (!converted) throw new Error('Missing prepared occurrence')
@@ -131,8 +188,10 @@ export function materializeInstance(
     if (existing && existing.parentId !== parent) {
       throw new Error(`Preallocated occurrence has wrong parent ${current.sourceId}`)
     }
-    const node = existing ?? graph.createNode(nodeType, parent, propsWithIdentity)
+    const node = existing ?? createLayer(current, nodeType, parent, propsWithIdentity, owner)
     if (existing) graph.updateNode(existing.id, propsWithIdentity)
+    const sharedSource = graph.getNode(sourceChildren.get(current) ?? '')
+    if (sharedSource) shareUnchanged(node, sharedSource)
     nodes.set(current, node)
     if (existing && current !== occurrence && node.type === 'COMPONENT') return node
     applyBindingClaims(current, node, owner)

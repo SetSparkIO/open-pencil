@@ -1,5 +1,13 @@
 import type { Page, Locator } from '@playwright/test'
 
+import { OFFICIAL_CLOUD_URL } from '@/constants'
+
+/**
+ * The app asks the official Cloud server whether Cloud is open yet and carries on without an
+ * answer, so a request to it that fails is the network's, not the app's.
+ */
+const OFFICIAL_CLOUD_ORIGIN = new URL(OFFICIAL_CLOUD_URL).origin
+
 export class CanvasHelper {
   readonly page: Page
   readonly canvas: Locator
@@ -10,7 +18,9 @@ export class CanvasHelper {
     this.canvas = page.getByTestId('canvas-area')
     page.on('pageerror', (err) => this.errors.push(err.message))
     page.on('console', (msg) => {
-      if (msg.type() === 'error') this.errors.push(msg.text())
+      if (msg.type() !== 'error') return
+      if (msg.location().url.startsWith(OFFICIAL_CLOUD_ORIGIN)) return
+      this.errors.push(msg.text())
     })
   }
 
@@ -33,12 +43,54 @@ export class CanvasHelper {
       .waitFor({ timeout: 30000 })
     await this.page.getByTestId('canvas-loading').waitFor({ state: 'hidden', timeout: 30000 })
     await this.page.locator('#loader').waitFor({ state: 'detached', timeout: 30000 })
+    await this.useLightPage()
+  }
+
+  /**
+   * Canvas specs draw on Figma's light page. Playwright runs the app in its dark theme, where a new
+   * document starts on Figma's dark page, so a fresh document (one empty page on that exact
+   * background) is switched back; any other document keeps its own. The switch is setup, not an
+   * edit, so the document stays saved and closing it asks nothing.
+   * `tests/e2e/pages/theme-background.spec.ts` covers the theme.
+   */
+  async useLightPage() {
+    await this.page.evaluate(() => {
+      const store = window.openPencil?.getStore?.()
+      if (!store) return
+      const pages = store.graph.getPages()
+      const [first] = pages
+      const darkDefault = 0x1e / 255
+      const { r, g, b } = store.state.pageColor
+      const fresh =
+        pages.length === 1 &&
+        first.childIds.length === 0 &&
+        [r, g, b].every((c) => c === darkDefault)
+      if (!fresh) return
+      store.setPageColor({ r: 0.96, g: 0.96, b: 0.96, a: 1 })
+      store.markDocumentSaved()
+    })
   }
 
   async clearCanvas() {
+    // Inside path editing, Select All and Backspace act on the path's points, not the layers.
+    await this.pressKey('Escape')
     await this.selectAll()
     await this.pressKey('Backspace')
     await this.waitForRender()
+  }
+
+  async pasteSVG(markup: string, x: number, y: number) {
+    return this.page.evaluate(
+      async ({ markup, x, y }) => {
+        const store = window.openPencil?.getStore?.()
+        if (!store) throw new Error('OpenPencil store not initialized')
+        const pasted = await store.pasteSVG(markup, x, y)
+        store.clearSelection()
+        store.requestRender()
+        return pasted
+      },
+      { markup, x, y }
+    )
   }
 
   async screenshotCanvas() {
@@ -96,7 +148,7 @@ export class CanvasHelper {
   }
 
   async drawSection(x: number, y: number, width: number, height: number) {
-    await this.pressKey('s')
+    await this.pressKey('Shift+KeyS')
     await this.drag(x, y, x + width, y + height)
     await this.waitForRender()
   }
@@ -107,7 +159,7 @@ export class CanvasHelper {
     const keys: Record<string, string> = {
       select: 'v',
       frame: 'f',
-      section: 's',
+      section: 'Shift+KeyS',
       rectangle: 'r',
       ellipse: 'o',
       text: 't',

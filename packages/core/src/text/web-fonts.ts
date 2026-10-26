@@ -1,7 +1,11 @@
+import { uniq } from 'es-toolkit'
 import type { FontFaceData, RemoteFontSource, ResolveFontResult } from 'unifont'
 
+import { parseFontStyle } from '@open-pencil/scene-graph/font-style'
+
 import { IS_BROWSER } from '#core/constants'
-import { parseFontStyle } from '#core/text/face'
+import type { FamilyFace } from '#core/text/font/faces'
+import { sfntFont } from '#core/text/font/woff2'
 import {
   createProviderUnifont,
   isRemoteFontSource,
@@ -27,6 +31,25 @@ export const DEFAULT_WEB_FONT_PROVIDER_SETTINGS: Record<WebFontProviderId, boole
 }
 
 export type WebFontFetch = (url: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * Hosts the font providers' metadata and stylesheet requests go to. Only these are proxied while
+ * a provider resolves; the app's other requests in that window keep their own fetch.
+ */
+const WEB_FONT_PROVIDER_HOSTS = new Set([
+  'api.fontshare.com',
+  'api.fontsource.org',
+  'cdn.jsdelivr.net',
+  'fonts.bunny.net',
+  'fonts.google.com',
+  'fonts.googleapis.com'
+])
+
+function isWebFontProviderURL(value: string): boolean {
+  if (!URL.canParse(value)) return false
+  const url = new URL(value)
+  return url.protocol === 'https:' && WEB_FONT_PROVIDER_HOSTS.has(url.hostname)
+}
 
 const DEFAULT_WEB_FONT_SUBSETS = [
   'latin',
@@ -57,13 +80,38 @@ export function webFontSubsetsForText(text: string): string[] {
 
 function preferredRemoteSource(face: FontFaceData): RemoteFontSource | undefined {
   const sources = face.src.filter(isRemoteFontSource)
+  // WOFF2 is decoded on arrival, and it is the only format Google serves variable fonts in.
   return (
+    sources.find((source) => source.format === 'woff2') ??
     sources.find((source) => source.format === 'truetype' || source.format === 'ttf') ??
     sources.find((source) => source.format === 'opentype' || source.format === 'otf') ??
-    sources.find((source) => source.format === 'woff2') ??
     sources.find((source) => source.format === 'woff') ??
     sources[0]
   )
+}
+
+const STANDARD_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
+
+/** The standard weights a face covers: one, or every one in a variable font's range. */
+function faceWeights(weight: FontFaceData['weight']): number[] {
+  const bounds = Array.isArray(weight)
+    ? weight
+    : String(weight ?? 400)
+        .trim()
+        .split(/\s+/u)
+        .map(Number)
+  const [min = 400, max = min] = bounds
+  return STANDARD_WEIGHTS.filter((value) => value >= min && value <= max)
+}
+
+function familyFacesOf(result: ResolveFontResult): FamilyFace[] {
+  const faces = new Map<string, FamilyFace>()
+  for (const font of result.fonts) {
+    const italic = font.style === 'italic' || font.style?.startsWith('oblique') === true
+    for (const weight of faceWeights(font.weight))
+      faces.set(`${weight}${italic ? 'i' : ''}`, { weight, italic })
+  }
+  return [...faces.values()]
 }
 
 function resolvedRemoteFaces(result: ResolveFontResult): Array<{
@@ -127,6 +175,7 @@ export class WebFontResolver {
   )
   private unifontPromises = new Map<WebFontProviderId, Promise<WebUnifont>>()
   private familiesCache = new Map<WebFontProviderId, string[]>()
+  private facesCache = new Map<string, Promise<FamilyFace[]>>()
   private familiesPromises = new Map<WebFontProviderId, Promise<string[]>>()
   private failedFonts = new Set<string>()
   private fontPromises = new Map<string, Promise<ArrayBuffer[]>>()
@@ -136,6 +185,7 @@ export class WebFontResolver {
   setEnabled(settings: Partial<Record<WebFontProviderId, boolean>>): void {
     this.enabled = new Set(WEB_FONT_PROVIDER_IDS.filter((provider) => settings[provider] === true))
     this.failedFonts.clear()
+    this.facesCache.clear()
   }
 
   setRemoteFetch(fetcher: WebFontFetch | null): void {
@@ -143,6 +193,7 @@ export class WebFontResolver {
     this.unifontPromises.clear()
     this.familiesPromises.clear()
     this.familiesCache.clear()
+    this.facesCache.clear()
     this.failedFonts.clear()
   }
 
@@ -162,6 +213,42 @@ export class WebFontResolver {
   preloadFamilies(): void {
     if (IS_BROWSER && !this.remoteFetch) return
     for (const provider of this.enabledProviders()) void this.listFamilies(provider)
+  }
+
+  /**
+   * The faces a family has at the first enabled provider that serves it, or none when no
+   * provider does. Asking a provider for every weight in both slants returns only the faces it
+   * has, without downloading them.
+   */
+  familyFaces(family: string): Promise<FamilyFace[]> {
+    let faces = this.facesCache.get(family)
+    if (!faces) {
+      faces = this.loadFamilyFaces(family)
+      this.facesCache.set(family, faces)
+    }
+    return faces
+  }
+
+  private async loadFamilyFaces(family: string): Promise<FamilyFace[]> {
+    if (typeof fetch === 'undefined' || (IS_BROWSER && !this.remoteFetch)) return []
+    for (const provider of this.enabledProviders()) {
+      try {
+        const unifont = await this.unifont(provider)
+        const result = await this.withFetchProxy<ResolveFontResult>(() =>
+          unifont.resolveFont(family, {
+            weights: STANDARD_WEIGHTS.map(String),
+            styles: ['normal', 'italic'],
+            formats: ['woff2', 'woff', 'ttf', 'otf']
+          })
+        )
+        const faces = familyFacesOf(result)
+        if (faces.length > 0) return faces
+      } catch (error) {
+        // The next provider may serve the family.
+        console.warn(`[fonts] ${provider} could not list the faces of ${family}:`, error)
+      }
+    }
+    return []
   }
 
   async listFamilies(provider: WebFontProviderId): Promise<string[]> {
@@ -216,7 +303,7 @@ export class WebFontResolver {
     const originalFetch = globalThis.fetch
     const proxyFetch = (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' || input instanceof URL ? input.toString() : input.url
-      if (url.startsWith('https://') || url.startsWith('http://')) {
+      if (isWebFontProviderURL(url)) {
         signal?.throwIfAborted()
         return (
           this.remoteFetch?.(url, { ...init, signal: signal ?? init?.signal }) ??
@@ -232,6 +319,36 @@ export class WebFontResolver {
     } finally {
       if (globalThis.fetch === proxyFetch) globalThis.fetch = originalFetch
       release?.()
+    }
+  }
+
+  /**
+   * The weights to ask for a style in, and the other axes: a variable family's whole range, so one
+   * file draws every weight and axis it has, or the style's own weight. unifont narrows each range
+   * to what the provider serves.
+   */
+  private async requestedAxes(
+    unifont: WebUnifont,
+    family: string,
+    weight: number,
+    signal?: AbortSignal
+  ): Promise<Pick<WebFontResolveOptions, 'weights' | 'variableAxis'>> {
+    const properties = await this.withFetchProxy(() => unifont.getFontProperties(family), signal)
+    const axes = properties?.axes ?? []
+    const wght = axes.find((axis) => axis.tag === 'wght')
+    const range = wght
+      ? [wght.min, wght.max]
+      : properties?.weights
+          ?.map((value) => value.split(' ').map(Number))
+          .find((bounds) => bounds.length === 2)
+    const [min = weight, max = weight] = range ?? []
+    if (!range || weight < min || weight > max) return { weights: [String(weight)] }
+    const others = axes.filter((axis) => axis.tag !== 'wght' && axis.tag !== 'ital')
+    return {
+      weights: [`${min} ${max}`],
+      variableAxis: Object.fromEntries(
+        others.map((axis) => [axis.tag, [{ min: axis.min, max: axis.max }]])
+      )
     }
   }
 
@@ -255,9 +372,7 @@ export class WebFontResolver {
     try {
       const unifont = await this.unifont(provider)
       const listedFamilies = await this.withFetchProxy(() => unifont.listFonts())
-      const families = listedFamilies
-        ? [...new Set(listedFamilies)].sort((a, b) => a.localeCompare(b))
-        : []
+      const families = listedFamilies ? uniq(listedFamilies).sort((a, b) => a.localeCompare(b)) : []
       this.familiesCache.set(provider, families)
       return families
     } catch {
@@ -309,15 +424,22 @@ export class WebFontResolver {
       signal?.throwIfAborted()
       const parsed = parseFontStyle(style)
       const unifont = await this.unifont(provider, signal)
-      const options = {
-        weights: [String(parsed.weight)],
+      const { weights, variableAxis } = await this.requestedAxes(
+        unifont,
+        family,
+        parsed.weight,
+        signal
+      )
+      const options: WebFontResolveOptions = {
+        weights,
         styles: [parsed.italic ? 'italic' : 'normal'],
-        formats: ['ttf', 'otf', 'woff2', 'woff'],
+        formats: ['woff2', 'ttf', 'otf', 'woff'],
         subsets: webFontSubsetsForText(characters),
-        ...(provider === 'google' && characters
-          ? { options: { google: { experimental: { glyphs: [characters] } } } }
-          : {})
-      } satisfies WebFontResolveOptions
+        variableAxis
+      }
+      if (provider === 'google' && characters) {
+        options.options = { google: { experimental: { glyphs: [characters] } } }
+      }
       const result = await this.withFetchProxy<ResolveFontResult>(
         () => unifont.resolveFont(family, options),
         signal
@@ -327,7 +449,7 @@ export class WebFontResolver {
       const buffers = await Promise.all(
         faces.map(async ({ source, init }) => {
           const response = await this.fetchRemote(source.url, { ...init, signal })
-          return response.ok ? response.arrayBuffer() : null
+          return response.ok ? sfntFont(await response.arrayBuffer()) : null
         })
       )
       return buffers.filter(isArrayBuffer)

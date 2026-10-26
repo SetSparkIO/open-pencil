@@ -12,6 +12,8 @@ export interface StyleOverride {
   styleID: number
   handleMirroring?: string
   strokeCap?: string
+  strokeJoin?: string
+  cornerRadius?: number
   fillPaints?: Paint[]
 }
 
@@ -19,6 +21,14 @@ export function decodeVectorNetworkBlob(
   data: Uint8Array,
   styleOverrideTable?: StyleOverride[]
 ): VectorNetwork {
+  return readVectorNetworkBlob(data, styleOverrideTable).network
+}
+
+/** The network a blob holds, with each segment's style word, which the network itself drops. */
+function readVectorNetworkBlob(
+  data: Uint8Array,
+  styleOverrideTable?: StyleOverride[]
+): { network: VectorNetwork; segmentStyles: number[] } {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   let offset = 0
 
@@ -47,11 +57,15 @@ export function decodeVectorNetworkBlob(
       handleMirroring: (style?.handleMirroring as HandleMirroring | undefined) ?? 'NONE'
     }
     if (style?.strokeCap) vertex.strokeCap = style.strokeCap
+    if (style?.strokeJoin) vertex.strokeJoin = style.strokeJoin
+    if (style?.cornerRadius !== undefined) vertex.cornerRadius = style.cornerRadius
     vertices.push(vertex)
   }
 
   const segments: VectorSegment[] = []
+  const segmentStyles: number[] = []
   for (let index = 0; index < segmentCount; index++) {
+    segmentStyles.push(view.getUint32(offset, true))
     offset += 4
     const start = view.getUint32(offset, true)
     offset += 4
@@ -75,7 +89,9 @@ export function decodeVectorNetworkBlob(
 
   const regions: VectorRegion[] = []
   for (let index = 0; index < regionCount; index++) {
-    const windingRule: WindingRule = view.getUint32(offset, true) === 0 ? 'EVENODD' : 'NONZERO'
+    // The low bit is the winding rule; the rest is the region's style ID, which names its fill.
+    const windingRule: WindingRule =
+      (view.getUint32(offset, true) & 1) === 1 ? 'NONZERO' : 'EVENODD'
     offset += 4
     const loopCount = view.getUint32(offset, true)
     offset += 4
@@ -93,11 +109,16 @@ export function decodeVectorNetworkBlob(
     regions.push({ windingRule, loops })
   }
 
-  return { vertices, segments, regions }
+  return { network: { vertices, segments, regions }, segmentStyles }
 }
 
 function vertexStyleKey(vertex: VectorVertex): string {
-  return `${vertex.handleMirroring ?? 'NONE'}|${vertex.strokeCap ?? ''}`
+  return [
+    vertex.handleMirroring ?? 'NONE',
+    vertex.strokeCap ?? '',
+    vertex.strokeJoin ?? '',
+    vertex.cornerRadius ?? ''
+  ].join('|')
 }
 
 export function buildStyleOverrideTable(network: VectorNetwork): {
@@ -109,13 +130,21 @@ export function buildStyleOverrideTable(network: VectorNetwork): {
   let nextId = 1
   for (const vertex of network.vertices) {
     const mirroring = vertex.handleMirroring ?? 'NONE'
-    if (mirroring === 'NONE' && !vertex.strokeCap) continue
+    if (
+      mirroring === 'NONE' &&
+      !vertex.strokeCap &&
+      !vertex.strokeJoin &&
+      vertex.cornerRadius === undefined
+    )
+      continue
     const key = vertexStyleKey(vertex)
     if (styleToId.has(key)) continue
     styleToId.set(key, nextId)
     const entry: StyleOverride = { styleID: nextId }
     if (mirroring !== 'NONE') entry.handleMirroring = mirroring
     if (vertex.strokeCap) entry.strokeCap = vertex.strokeCap
+    if (vertex.strokeJoin) entry.strokeJoin = vertex.strokeJoin
+    if (vertex.cornerRadius !== undefined) entry.cornerRadius = vertex.cornerRadius
     table.push(entry)
     nextId++
   }
@@ -186,4 +215,20 @@ export function encodeVectorNetworkBlob(
   }
 
   return new Uint8Array(buffer)
+}
+
+/** The style word Figma writes on the one segment a text path starts on. */
+const TEXT_PATH_START_SEGMENT = 0x1ffffff
+
+/**
+ * The segment a text path starts on: Figma marks it by writing {@link TEXT_PATH_START_SEGMENT}
+ * as its style word, and `textPathStart.tValue` is the position within it. Segment 0 when none is
+ * marked, as in Figma.
+ */
+export function textPathStartSegment(blob: Uint8Array): number {
+  const { segmentStyles } = readVectorNetworkBlob(blob)
+  const index = segmentStyles.findIndex(
+    (word) => (word & TEXT_PATH_START_SEGMENT) === TEXT_PATH_START_SEGMENT
+  )
+  return Math.max(index, 0)
 }

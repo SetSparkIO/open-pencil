@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { createEditor } from '@open-pencil/core'
+import { exportFigFile, parseFigFile, populateFigPage } from '@open-pencil/core/io/formats/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
 import { SceneGraph } from '@open-pencil/scene-graph'
 
 import type { PageSwitchProgress } from '#core/editor/pages'
@@ -237,4 +239,65 @@ test('preparing a page reports failure when the document is replaced meanwhile',
   release()
 
   expect(await preparing).toBe(false)
+})
+
+test("loading a page's layers from the opened file asks for one render", async () => {
+  await initCodec()
+  const source = new SceneGraph()
+  const second = source.addPage('Second')
+  for (let i = 0; i < 30; i++) source.createNode('RECTANGLE', second.id, { name: `Layer ${i}` })
+  const bytes = await exportFigFile(source)
+  const graph = await parseFigFile(bytes.slice().buffer, { populate: 'first-page' })
+  const editor = createEditor({ graph })
+  const page = graph.getPages()[1]
+  if (!page) throw new Error('Expected a second page')
+  await Promise.resolve()
+
+  let renders = 0
+  const unbind = editor.onEditorEvent('render:requested', () => renders++)
+  expect(populateFigPage(graph, page.id)).toBe(true)
+  await Promise.resolve()
+  unbind()
+
+  expect(graph.getChildren(page.id)).toHaveLength(30)
+  expect(renders).toBe(1)
+  editor.dispose()
+})
+
+test('preparing a page loads the pages holding the component sets its instances use', async () => {
+  await initCodec()
+  const source = new SceneGraph()
+  const [design] = source.getPages()
+  const set = (pageName: string, name: string) => {
+    const page = source.addPage(pageName)
+    const created = source.createNode('COMPONENT_SET', page.id, { name })
+    const variant = (value: string) =>
+      source.createNode('COMPONENT', created.id, {
+        name: `State=${value}`,
+        componentPropertyValues: { State: value }
+      })
+    return { off: variant('Off'), on: variant('On') }
+  }
+  // Only the switch's On variant holds a knob, from a set on a third page, so the design page
+  // reaches that set through the switch's page alone.
+  const knob = set('Parts', 'Knob')
+  const toggle = set('Library', 'Switch')
+  source.createInstance(knob.off.id, toggle.on.id)
+  source.createInstance(toggle.off.id, design.id)
+  const bytes = await exportFigFile(source)
+  const graph = await parseFigFile(bytes.slice().buffer, { populate: 'none' })
+  const editor = createEditor({ graph, skipInitialGraphSetup: true })
+  const [first] = graph.getPages()
+  const variants = (setName: string) => {
+    const found = [...graph.getAllNodes()].find(
+      (node) => node.type === 'COMPONENT_SET' && node.name === setName
+    )
+    return found ? graph.getChildren(found.id).map((node) => node.name) : []
+  }
+
+  expect(await editor.preparePage(first.id)).not.toBeNull()
+
+  expect(variants('Switch')).toEqual(['State=Off', 'State=On'])
+  expect(variants('Knob')).toEqual(['State=Off', 'State=On'])
+  editor.dispose()
 })

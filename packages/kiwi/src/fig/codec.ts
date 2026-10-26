@@ -6,9 +6,8 @@
  * - fzstd: Browser-compatible Zstd decompression
  */
 
-import { decompress as zstdDecompress } from 'fzstd'
-
 import { compileSchema, encodeBinarySchema } from '../schema-runtime'
+import { decompressFigKiwiData, loadFigDataDecompressor } from './container'
 import { isZstdCompressed, getKiwiMessageType } from './protocol'
 import figmaSchema from './schema'
 import type { Color, GUID, Matrix, Vector } from './types'
@@ -27,6 +26,7 @@ let compiledSchema: CompiledSchema | null = null
  */
 export async function initCodec(): Promise<void> {
   if (compiledSchema) return
+  await loadFigDataDecompressor()
   compiledSchema = compileSchema(figmaSchema) as CompiledSchema
 }
 
@@ -58,7 +58,7 @@ export function compress(data: Uint8Array): Uint8Array {
  */
 export function decompress(data: Uint8Array): Uint8Array {
   if (!isZstdCompressed(data)) return data
-  return zstdDecompress(data)
+  return decompressFigKiwiData(data)
 }
 
 /**
@@ -98,8 +98,6 @@ export function peekMessageType(data: Uint8Array): number | null {
 
 // Type definitions
 
-export type { Color, GUID, Matrix, Vector } from './types'
-
 export interface ParentIndex {
   guid: GUID
   position: string
@@ -133,6 +131,8 @@ export interface Paint {
   imageThumbnail?: ImageSource
   animatedImage?: ImageSource
   imageScaleMode?: string
+  /** Degrees an image turns in Fill, Fit, and Tile; a crop's transform holds its own turn. */
+  rotation?: number
   sourceNodeId?: GUID
   scale?: number
   spacing?: number
@@ -178,6 +178,13 @@ export interface VariableAnyValue {
   symbolIdValue?: { guid?: GUID }
   // fig.kiwi PropRefValue: the component property a parameter entry points at.
   propRefValue?: { defId?: GUID }
+  mapValue?: { values?: { key?: string; guidKey?: GUID; value?: VariableDataEntry }[] }
+  colorArrayValue?: { colors?: VariableDataEntry[] }
+  fontStyleValue?: {
+    asString?: VariableDataEntry
+    asFloat?: VariableDataEntry
+    asVariations?: VariableDataEntry
+  }
   expressionValue?: {
     expressionFunction?: string
     expressionArguments?: VariableDataEntry[]
@@ -220,6 +227,16 @@ export interface AssetRef {
 }
 
 export type StyleReference = { guid: GUID; assetRef?: never } | { guid?: never; assetRef: AssetRef }
+
+/** One paragraph of a text: whether it is a list item, and how deeply it nests. */
+export interface TextLineData {
+  lineType?: 'PLAIN' | 'ORDERED_LIST' | 'UNORDERED_LIST' | 'BLOCKQUOTE' | 'HEADER'
+  styleId?: number
+  indentationLevel?: number
+  sourceDirectionality?: string
+  listStartOffset?: number
+  isFirstLineOfList?: boolean
+}
 
 export interface NodeChange {
   [key: string]: unknown
@@ -270,6 +287,7 @@ export interface NodeChange {
   stackCounterSpacing?: number
   minSize?: { value?: Vector }
   maxSize?: { value?: Vector }
+  targetAspectRatio?: { value?: Vector }
   // Frame
   clipsContent?: boolean
   frameMaskDisabled?: boolean
@@ -288,7 +306,7 @@ export interface NodeChange {
   textAutoResize?: string
   textData?: {
     characters: string
-    lines?: Array<{ lineType?: string; styleId?: number; indentationLevel?: number }>
+    lines?: TextLineData[]
     characterStyleIDs?: number[]
     styleOverrideTable?: NodeChange[]
   }
@@ -307,10 +325,21 @@ export interface NodeChange {
       commandsBlob?: number
       position: Vector
       fontSize: number
-      firstCharacter: number
+      /** The character the glyph draws; Figma leaves it out for list markers. */
+      firstCharacter?: number
       advance: number
       /** Radians along the text path; kiwi omits the field for axis-aligned text. */
       rotation?: number
+      /** An emoji's code points; Figma draws its image in place of the glyph's placeholder. */
+      emojiCodePoints?: number[]
+      /** The image set the emoji is drawn from; left out for the default, APPLE. */
+      emojiImageSet?: 'APPLE' | 'NOTO'
+    }>
+    /** Underlines and strikethroughs, which Figma draws saved text's decorations from. */
+    decorations?: Array<{
+      rects: Array<{ x: number; y: number; w: number; h: number }>
+      /** The override table entry of the characters decorated, or 0 for the text's own style. */
+      styleID: number
     }>
     fontMetaData?: Array<{
       key: { family: string; style: string; postscript?: string }
@@ -356,6 +385,10 @@ export interface NodeChange {
   emojiImageSet?: string
   lineHeight?: { value: number; units: string }
   letterSpacing?: { value: number; units: string }
+  paragraphSpacing?: number
+  paragraphIndent?: number
+  listSpacing?: number
+  hangingList?: boolean
   // Symbol/Instance
   symbolData?: { symbolID: GUID }
   // ComponentSet
@@ -370,6 +403,10 @@ export interface NodeChange {
   rectangleBottomRightCornerRadius?: number
   rectangleCornerRadiiIndependent?: boolean
   cornerSmoothing?: number
+  /** A polygon's sides or a star's points. */
+  count?: number
+  /** A star's inner radius as a share of its outer one. */
+  starInnerScale?: number
   // Constraints
   horizontalConstraint?: string
   verticalConstraint?: string
@@ -497,5 +534,3 @@ export function createNodeChange(opts: {
 
   return change
 }
-
-export { parseVariableId } from './variable-bindings'

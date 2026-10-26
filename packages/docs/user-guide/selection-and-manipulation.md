@@ -8,12 +8,17 @@ description: Selecting, moving, resizing, rotating, duplicating, and organizing 
 Select objects to move, resize, rotate, duplicate, and organize them on the canvas.
 ## Selecting
 
-- **Click** a node to select it (deselects everything else). As in Figma, a click inside a top-level frame selects that frame's direct child, such as a nested frame or a group, rather than the deepest layer; click a top-level frame by its title, or anywhere when it is empty
-- **Double-click** to go one level deeper; once a layer is selected, clicks reach its siblings and cousins directly
-- <kbd>⌘</kbd> + click (<kbd>Ctrl</kbd> + click on Windows and Linux) selects the deepest layer under the cursor
-- <kbd>Shift</kbd> + click to add or remove a node from the current selection
-- **Marquee drag** — drag on empty canvas to draw a selection rectangle; intersecting nodes are selected on release. Started inside a top-level frame or section, it selects that container's layers; from the page, a frame or section that holds layers is selected only when fully enclosed
+- **Click** a node to select it (deselects everything else). As in Figma, a click inside a top-level frame selects that frame's direct child, such as a nested frame or a group, rather than the deepest layer; click a top-level frame by its title, anywhere when it is empty, or by its gaps and padding when it has auto layout
+- **Hover** an auto layout frame to see its direct children outlined with dotted lines; while a single layer is selected, the border of its auto layout parent is dotted
+- **Double-click** to go one level deeper, or click again inside a selected frame, component, or instance; once a layer is selected, clicks reach its siblings and cousins directly
+- <kbd>⌘</kbd> + click (<kbd>Ctrl</kbd> + click on Windows and Linux) selects the deepest layer under the cursor; holding <kbd>⌘</kbd> highlights that layer before you click
+- <kbd>Shift</kbd> + click to add or remove a node from the current selection. A layer and its own parent or child are never selected together, so Shift-clicking one replaces the other
+- **Double-click a frame's or component's name** above it on the canvas to rename it in place
+- **Marquee drag** — drag on empty canvas to draw a selection rectangle; intersecting nodes are selected on release. Started inside a top-level frame without auto layout or a section, it selects that container's layers; from the page, a frame or section that holds layers is selected only when fully enclosed
 - <kbd>⌘</kbd><kbd>A</kbd> — select all nodes on the current page
+- <kbd>Enter</kbd> — select the children of the selected layers; on a vector it edits the path and on text it edits the text
+- <kbd>Shift</kbd> + <kbd>Enter</kbd> or <kbd>\\</kbd> — select the parent of the selected layers
+- <kbd>Tab</kbd> / <kbd>Shift</kbd> + <kbd>Tab</kbd> — select the next or previous sibling, going down or up the layers panel and wrapping at the ends
 - **Click empty canvas** — deselect all
 
 ## Moving
@@ -74,6 +79,15 @@ Change the stacking order of nodes within their parent:
 ## Move to Page
 
 Move selected nodes to a different page via the [context menu](./context-menu). The nodes are reparented under the target page's canvas.
+
+## Editing several layers
+
+With several layers selected, the properties panel shows what they have in common and reads **Mixed** where they differ; an edit changes all of them in one undo step.
+
+- **Layout** shows their sizes, text resizing when text is selected, flow when every layer is a frame, and clip content for the frames among them. When the layers form one row or column, **Spacing** shows the gap between them; typing a value spaces them evenly from the first layer.
+- **Typography** appears whenever text is selected and changes only the text.
+- **Stroke** shows the stroke of the layers that have one; editing it strokes every selected layer.
+- **Selection colors** lists every fill and stroke colour in the selection, including inside frames and groups, most used first. Changing one recolours it everywhere it is used.
 
 ## Sections
 

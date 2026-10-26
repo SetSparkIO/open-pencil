@@ -11,6 +11,7 @@
   "importing": "Wird importiert…",
   "importToCanvas": "Auf die Arbeitsfläche importieren",
   "newTab": "Neuer Tab",
+  "home": "Startseite",
   "closeTab": "{name} schließen",
   "clipboardImageUnavailableWeb": "Das eingefügte Design enthält 1 Bild, das in der Web-App nicht geladen werden kann. Verwende die Desktop-App, um es einzuschließen.",
   "clipboardImagesUnavailableWeb": "Das eingefügte Design enthält {count} Bilder, die in der Web-App nicht geladen werden können. Verwende die Desktop-App, um sie einzuschließen.",
@@ -26,5 +27,6 @@
   "noMatchingFiles": "Keine Dateien entsprechen „{query}“.",
   "saveAsPrompt": "Speichern unter:",
   "browserFileAPINotSupported": "Dein Browser unterstützt die lokale Datei-API nicht. Dateien werden heruntergeladen, statt direkt gespeichert zu werden.",
-  "browserFileAPIDisabledInBrave": "Brave schaltet die lokale Datei-API standardmäßig ab, daher werden Dateien heruntergeladen, statt direkt gespeichert zu werden. Zum direkten Speichern brave://flags/#file-system-access-api aktivieren und Brave neu starten."
+  "browserFileAPIDisabledInBrave": "Brave schaltet die lokale Datei-API standardmäßig ab, daher werden Dateien heruntergeladen, statt direkt gespeichert zu werden. Zum direkten Speichern brave://flags/#file-system-access-api aktivieren und Brave neu starten.",
+  "newDesignIn": "Neues Design in {place}"
 }

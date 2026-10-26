@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test'
 
-import { createEditor, graphFromPageSnapshot } from '@open-pencil/core/editor'
-import { diffPageLayersJSX } from '@open-pencil/core/tools'
-
 import { expectDefined } from '#core-tests/helpers/assert'
+
+import { createEditor, graphFromPageSnapshot } from '@open-pencil/core'
+import { diffPageLayersJSX } from '@open-pencil/core/tools'
 
 test('reports top-level layers changed deep in their subtree, added, or removed', () => {
   const editor = createEditor()

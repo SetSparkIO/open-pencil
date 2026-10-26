@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test'
 
 import { tool } from 'ai'
 
-import { ALL_TOOLS, FigmaAPI, SceneGraph, toolsToAI } from '@open-pencil/core'
+import { FigmaAPI } from '@open-pencil/core/figma-api'
+import { ALL_TOOLS, toolsToAI } from '@open-pencil/core/tools'
+import { SceneGraph } from '@open-pencil/scene-graph'
 
-import { expectDefined } from '#tests/helpers/assert'
+import { expectDefined, expectFills } from '#tests/helpers/assert'
 
 type AdapterTool = { execute(args: Record<string, unknown>): Promise<unknown>; description: string }
 type SDKTool = {
@@ -105,9 +107,8 @@ describe('AI adapter', () => {
     const setFill = adapterTool(tools, 'set_fill')
     await setFill.execute({ id: rect.id, color: '#00ff00' })
 
-    const fills = expectDefined(figma.getNodeById(rect.id), 'filled rectangle').fills
-    expect(fills.length).toBe(1)
-    expect(fills[0].color.g).toBeCloseTo(1)
+    const fills = expectFills(expectDefined(figma.getNodeById(rect.id), 'filled rectangle').fills)
+    expect(fills).toEqual([expect.objectContaining({ color: { r: 0, g: 1, b: 0 } })])
   })
 
   test('get_page_tree tool returns structure', async () => {

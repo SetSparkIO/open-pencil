@@ -1,19 +1,20 @@
 import { describe, expect, mock, test } from 'bun:test'
 
-import { createDefaultNode, SceneGraph } from '@open-pencil/scene-graph'
-import type { SceneNode } from '@open-pencil/scene-graph'
+import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
+import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
 
 import { drawGuides } from '#core/canvas/guides/draw'
 
 import { createMockCanvas, createMockRenderer, mockCalls } from '../effects/helpers'
-import { asCanvas, asDouble } from '../helpers'
+import { asCanvas } from '../helpers'
 
 function graphWithGuides(guides: SceneNode['guides']): SceneGraph {
-  const page = createDefaultNode(() => 'page', 'CANVAS', { childIds: [], guides })
-  return asDouble<SceneGraph>({
-    rootId: 'root',
-    getNode: (id: string) => (id === 'page' ? page : null)
-  })
+  const graph = new SceneGraph()
+  graph.rootId = 'root'
+  graph.nodes = new Map([
+    ['page', createDefaultNode(() => 'page', 'CANVAS', { childIds: [], guides })]
+  ])
+  return graph
 }
 
 describe('page guide rendering', () => {

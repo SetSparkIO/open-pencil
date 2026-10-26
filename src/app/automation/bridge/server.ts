@@ -8,12 +8,15 @@ import * as v from 'valibot'
 
 import { randomHex } from '@open-pencil/scene-graph/random'
 
+import { endAgentSession, readAgentSession } from '@/app/automation/agents'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
+import type { AutomationFiles } from '@/app/automation/bridge/file-handlers'
 import { createAutomationCommandHandlers } from '@/app/automation/bridge/handlers'
+import { isUnknownRecord } from '@/app/automation/bridge/target'
 import type { EditorStore } from '@/app/editor/active-store'
 
 /** Requests from the MCP bridge; other message types (such as the register prompt) are ignored. */
-const AutomationRequestJSON = v.pipe(
+const automationRequestSchema = v.pipe(
   v.string(),
   v.parseJson(),
   v.object({
@@ -23,6 +26,26 @@ const AutomationRequestJSON = v.pipe(
     args: v.optional(v.unknown())
   })
 )
+
+/**
+ * The connections each MCP session's calls came over, across bridges: restarting MCP opens a new
+ * bridge while the old socket is still closing, and that close must not end a session the new
+ * connection carries, so a session ends only with its last connection.
+ */
+const sessionSockets = new Map<string, Set<WebSocket>>()
+
+/**
+ * The MCP server's `/files/`, beside the socket the app connects to, where a browser app reads and
+ * writes the paths the file tools name. Each folder is one URL segment, so the URL ends in the
+ * file's own name; a leading separator stays as an empty segment, as in a Windows share's `\\`.
+ */
+export function automationFiles(automationURL: string, token: string): AutomationFiles {
+  const base = new URL(automationURL.replace(/^ws/, 'http'))
+  return {
+    url: (path) => new URL(`/files/${path.split(/[\\/]/).map(encodeURIComponent).join('/')}`, base),
+    headers: { authorization: `Bearer ${token}` }
+  }
+}
 
 export function connectAutomation(
   getStore: () => EditorStore,
@@ -34,8 +57,10 @@ export function connectAutomation(
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let intentionalDisconnect = false
 
-  const { handleRequest: handleAutomationRequest } =
-    createAutomationCommandHandlers(makeFigmaFromStore)
+  const { handleRequest: handleAutomationRequest } = createAutomationCommandHandlers(
+    makeFigmaFromStore,
+    automationFiles(automationURL, token)
+  )
 
   async function handleRequest(_id: string, command: string, args: unknown): Promise<unknown> {
     return handleAutomationRequest(getStore(), command, args)
@@ -62,13 +87,19 @@ export function connectAutomation(
 
     socket.onmessage = async (event) => {
       try {
-        const parsed = v.safeParse(AutomationRequestJSON, event.data)
+        const parsed = v.safeParse(automationRequestSchema, event.data)
         if (!parsed.success) {
           if (parsed.issues.some((issue) => issue.type === 'parse_json'))
             console.warn('Failed to parse WebSocket message:', v.summarize(parsed.issues))
           return
         }
         const msg = parsed.output
+        const session = isUnknownRecord(msg.args) ? readAgentSession(msg.args.agent) : null
+        if (session) {
+          const sockets = sessionSockets.get(session.session) ?? new Set<WebSocket>()
+          sockets.add(socket)
+          sessionSockets.set(session.session, sockets)
+        }
         try {
           const result = await handleRequest(msg.id, msg.command, msg.args)
           if (socket.readyState !== WebSocket.OPEN) return
@@ -91,6 +122,13 @@ export function connectAutomation(
 
     socket.onclose = (event) => {
       if (ws === socket) ws = null
+      // Sessions that reached the app only over this connection cannot any more, so their agents
+      // leave; ones that also came another way, such as over a newer connection, stay.
+      for (const [id, sockets] of sessionSockets) {
+        if (!sockets.delete(socket) || sockets.size > 0) continue
+        sessionSockets.delete(id)
+        endAgentSession(id)
+      }
       if (intentionalDisconnect || event.code === 1000) return
       console.warn('[Automation] WebSocket closed:', `code=${event.code} reason=${event.reason}`)
       scheduleReconnect()

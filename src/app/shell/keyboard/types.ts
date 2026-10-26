@@ -1,15 +1,16 @@
 import type { ComputedRef } from 'vue'
 
-import type { useEditorCommands } from '@open-pencil/vue'
+import type { useEditorCommands } from '@open-pencil/vue/editor/commands'
 
 import type { EditorStore } from '@/app/editor/active-store'
 
 export type KeyboardShortcutActions = {
   smartDelete: (altKey: boolean) => void
-  confirmOrEnterText: () => void
+  confirmOrEditSelection: () => void
   escapeOrDeselect: () => void
   toggleAutoLayout: () => void
   toggleUI: () => void
+  togglePlay: () => void
   toggleAI: () => void
   exportSelectionPNG: () => void
   opacityDigit: (digit: string) => void

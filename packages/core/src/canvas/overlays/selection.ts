@@ -1,11 +1,13 @@
 import type { Canvas } from 'canvaskit-wasm'
 
-import { slotPropertyId } from '@open-pencil/scene-graph'
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { layerRotates } from '@open-pencil/scene-graph/generated'
 import { computeBounds, rotatedCorners } from '@open-pencil/scene-graph/geometry'
 import Matrix from '@open-pencil/scene-graph/matrix'
 import type { Vector } from '@open-pencil/scene-graph/primitives'
+import { slotPropertyId } from '@open-pencil/scene-graph/slots'
 
+import { drawConnectorHover, drawConnectorSelection } from '#core/canvas/overlays/connectors'
 import type { RenderOverlays, SkiaRenderer } from '#core/canvas/renderer'
 import {
   HANDLE_HALF_SIZE,
@@ -16,13 +18,20 @@ import {
 } from '#core/constants'
 import {
   createSceneGeometry,
+  hasTransformHandles,
+  isLineLike,
   viewportMatrix,
   selectionPath,
   rotationHandleLayout,
   type RotationHandleLayout,
   type RotationPreview
 } from '#core/geometry'
-import { pathTextSelectionBand, pointAtArc } from '#core/text/path'
+import { pointAtArc, textPathStartArc } from '#core/text/path'
+
+import { inNodeSpace, outlineNode, withScreenStroke } from './outline'
+
+/** The dash of faint selection bounds, in screen pixels. */
+const SELECTION_DASH = [4, 4] as const
 
 export function drawHoverHighlight(
   r: SkiaRenderer,
@@ -33,8 +42,12 @@ export function drawHoverHighlight(
 ): void {
   const node = hoveredNodeId ? graph.getNode(hoveredNodeId) : undefined
   if (!node) return
+  if (node.type === 'CONNECTOR') {
+    drawConnectorHover(r, canvas, graph, node, preview)
+    return
+  }
   r.auxStroke.setStrokeWidth((node.type === 'SECTION' ? SECTION_HOVER_STROKE_WIDTH : 1) / r.zoom)
-  r.auxStroke.setColor(r.outlineColor(node))
+  r.auxStroke.setColor(r.outlineColor(node, graph))
   r.auxStroke.setPathEffect(null)
   canvas.save()
   canvas.concat(createSceneGeometry(graph, preview).screenMatrix(node, r))
@@ -59,14 +72,11 @@ export function drawCodeFocus(
   r.auxFill.setColor(
     component ? r.compColor(CODE_FOCUS_FILL_ALPHA) : r.selColor(CODE_FOCUS_FILL_ALPHA)
   )
-  r.auxStroke.setStrokeWidth(1 / r.zoom)
-  r.auxStroke.setColor(component ? r.compColor() : r.selColor())
-  r.auxStroke.setPathEffect(null)
-  canvas.save()
-  canvas.concat(createSceneGeometry(graph, preview).screenMatrix(node, r))
-  r.strokeNodeShape(canvas, node, r.auxFill)
-  r.strokeNodeShape(canvas, node, r.auxStroke)
-  canvas.restore()
+  const color = component ? r.compColor() : r.selColor()
+  inNodeSpace(r, canvas, createSceneGeometry(graph, preview), node, () => {
+    r.strokeNodeShape(canvas, node, r.auxFill)
+    withScreenStroke(r, { color }, (paint) => r.strokeNodeShape(canvas, node, paint))
+  })
 }
 
 export function drawEnteredContainer(
@@ -76,21 +86,8 @@ export function drawEnteredContainer(
   enteredContainerId?: string | null,
   preview?: RotationPreview | null
 ): void {
-  const node = enteredContainerId ? graph.getNode(enteredContainerId) : undefined
-  if (!node) return
-  const dash = r.ck.PathEffect.MakeDash([4 / r.zoom, 4 / r.zoom], 0)
-  r.auxStroke.setStrokeWidth(1 / r.zoom)
-  r.auxStroke.setColor(r.selColor(SELECTION_DASH_ALPHA))
-  r.auxStroke.setPathEffect(dash)
-  canvas.save()
-  try {
-    canvas.concat(createSceneGeometry(graph, preview).screenMatrix(node, r))
-    canvas.drawRect(r.ck.LTRBRect(0, 0, node.width, node.height), r.auxStroke)
-  } finally {
-    canvas.restore()
-    r.auxStroke.setPathEffect(null)
-    dash.delete()
-  }
+  const stroke = { color: r.selColor(SELECTION_DASH_ALPHA), dash: SELECTION_DASH }
+  outlineNode(r, canvas, graph, enteredContainerId, stroke, preview)
 }
 
 /** Single-node selection overlay: path-text curve/band for imported TEXT_PATH,
@@ -113,16 +110,20 @@ function drawSingleSelection(
   const isPathText = node.textPathData !== null && node.textPathBox !== null
   const editing = overlays.editingTextId === id
   // While editing: normal text hands off to the flat text-edit overlay, but path
-  // text keeps its path overlay (curved band + path) — its flat text-edit overlay
-  // is suppressed (see drawTextEditOverlay) since it can't follow the path.
+  // text keeps its path and start point, as in Figma; the text-edit overlay
+  // outlines the lettering and draws the caret and selection along the path.
   if (editing && !isPathText) return
 
-  r.selectionPaint.setColor(r.outlineColor(node))
+  r.selectionPaint.setColor(r.outlineColor(node, graph))
   r.selectionPaint.setStrokeWidth(1 / r.zoom)
 
   const rotation = node.rotation
-  if (isPathText) {
-    drawTextPathSelection(r, canvas, node, rotation, graph, preview)
+  if (node.type === 'CONNECTOR') {
+    // While its label is typed into, FigJam shows only the label's box.
+    const label = overlays.editingTextId ? graph.getNode(overlays.editingTextId) : undefined
+    if (label?.parentId !== node.id) drawConnectorSelection(r, canvas, graph, node, preview)
+  } else if (isPathText) {
+    drawTextPathSelection(r, canvas, node, rotation, graph, editing, preview)
     if (!editing) r.drawSelectionLabels(canvas, graph, selectedIds, overlays)
   } else {
     r.drawNodeSelection(canvas, node, rotation, graph, preview)
@@ -155,7 +156,7 @@ export function drawSelection(
     const node = graph.getNode(id)
     if (!node) continue
 
-    r.selectionPaint.setColor(r.outlineColor(node))
+    r.selectionPaint.setColor(r.outlineColor(node, graph))
     r.selectionPaint.setStrokeWidth(1 / r.zoom)
 
     const rotation = node.rotation
@@ -203,7 +204,8 @@ function withNodeBounds(
  * follows, a faint dashed box + handles, a center crosshair, and a start marker
  * at `textPathStart`. Bounds come from the glyph-fitted path box (see
  * fitTextPathBoxToGlyphs), so the circle tracks the lettering rather than the
- * ~4%-off textPathBox. Display-only — reads retained data, mutates nothing.
+ * ~4%-off textPathBox. While its text is edited only the path and start marker
+ * stay, as in Figma. Display-only — reads retained data, mutates nothing.
  */
 function drawTextPathSelection(
   r: SkiaRenderer,
@@ -211,6 +213,7 @@ function drawTextPathSelection(
   node: SceneNode,
   rotation: number,
   graph: SceneGraph,
+  editing: boolean,
   preview?: RotationPreview | null
 ): void {
   const pathGeometry = selectionPath(node)
@@ -227,51 +230,33 @@ function drawTextPathSelection(
     rotation,
     graph,
     () => {
-      // Figma-style selection band: a filled ribbon that hugs the lettering along
-      // the path (replaces the flat, path-blind text-edit selection rects).
-      const bandPoly = pathTextSelectionBand(data, box, node.derivedTextGlyphs, sampled)
-      if (bandPoly && bandPoly.length >= 6) {
-        const band = new r.ck.PathBuilder()
-        band.moveTo(bandPoly[0], bandPoly[1])
-        for (let i = 2; i < bandPoly.length; i += 2) band.lineTo(bandPoly[i], bandPoly[i + 1])
-        band.close()
-        const immutableBand = band.detachAndDelete()
-        r.auxFill.setColor(r.selColor(0.16))
-        canvas.drawPath(immutableBand, r.auxFill)
-        r.auxStroke.setStrokeWidth(1 / r.zoom)
-        r.auxStroke.setColor(r.selColor())
-        r.auxStroke.setPathEffect(null)
-        canvas.drawPath(immutableBand, r.auxStroke)
-        immutableBand.delete()
+      // While editing, the text-edit overlay outlines the lettering instead.
+      if (!editing) {
+        // Faint dashed bounds + resize/rotate handles from the fitted path box.
+        withScreenStroke(
+          r,
+          { color: r.selColor(SELECTION_DASH_ALPHA), dash: SELECTION_DASH },
+          (paint) =>
+            canvas.drawRect(
+              r.ck.LTRBRect(box.x, box.y, box.x + box.width, box.y + box.height),
+              paint
+            )
+        )
+        drawBoundsHandles(
+          r,
+          canvas,
+          box.x,
+          box.y,
+          box.x + box.width,
+          box.y + box.height,
+          rotationHandleLayout(node, createSceneGeometry(graph, preview), r.zoom, {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height
+          })
+        )
       }
-
-      // Faint dashed bounds + resize/rotate handles from the fitted path box.
-      r.auxStroke.setStrokeWidth(1 / r.zoom)
-      r.auxStroke.setColor(r.selColor(SELECTION_DASH_ALPHA))
-      // MakeDash allocates a WASM PathEffect the JS GC won't reclaim; this runs
-      // every repaint while a TEXT_PATH node is selected, so free it explicitly.
-      const dash = r.ck.PathEffect.MakeDash([4 / r.zoom, 4 / r.zoom], 0)
-      r.auxStroke.setPathEffect(dash)
-      canvas.drawRect(
-        r.ck.LTRBRect(box.x, box.y, box.x + box.width, box.y + box.height),
-        r.auxStroke
-      )
-      r.auxStroke.setPathEffect(null) // auxStroke is shared — never leave a dash effect on it.
-      dash.delete()
-      drawBoundsHandles(
-        r,
-        canvas,
-        box.x,
-        box.y,
-        box.x + box.width,
-        box.y + box.height,
-        rotationHandleLayout(node, createSceneGeometry(graph, preview), r.zoom, {
-          x: box.x,
-          y: box.y,
-          width: box.x + box.width - box.x,
-          height: box.y + box.height - box.y
-        })
-      )
 
       // The path curve itself, sampled from the headless path metrics only for drawing.
       const path = new r.ck.PathBuilder()
@@ -287,23 +272,28 @@ function drawTextPathSelection(
       canvas.drawPath(immutablePath, r.selectionPaint)
       immutablePath.delete()
 
-      // Center crosshair at the fitted path box center (screen-constant size).
-      const cx = box.x + box.width / 2
-      const cy = box.y + box.height / 2
-      const arm = (HANDLE_HALF_SIZE * 2) / r.zoom
-      canvas.drawLine(cx - arm, cy, cx + arm, cy, r.selectionPaint)
-      canvas.drawLine(cx, cy - arm, cx, cy + arm, r.selectionPaint)
+      if (!editing) {
+        // Center crosshair at the fitted path box center (screen-constant size).
+        const cx = box.x + box.width / 2
+        const cy = box.y + box.height / 2
+        const arm = (HANDLE_HALF_SIZE * 2) / r.zoom
+        canvas.drawLine(cx - arm, cy, cx + arm, cy, r.selectionPaint)
+        canvas.drawLine(cx, cy - arm, cx, cy + arm, r.selectionPaint)
+      }
 
-      // Start-point marker on the curve at textPathStart.tValue (arc fraction).
+      // Start-point marker where aligned text is laid out from.
       // forward only flips travel direction, which the display-only marker ignores.
-      const s = Math.min(Math.max(data.tValue, 0), 1) * sampled.length
-      const start = pointAtArc(sampled, s)
+      const start = pointAtArc(sampled, textPathStartArc(data, sampled))
       drawHandle(r, canvas, start.x, start.y)
     },
     preview
   )
 }
 
+/**
+ * Figma's corner handles and our rotation stalk, absent for a layer that does not turn; a layer
+ * too small for handles, or in a read-only document, shows none.
+ */
 function drawBoundsHandles(
   r: SkiaRenderer,
   canvas: Canvas,
@@ -311,20 +301,16 @@ function drawBoundsHandles(
   minY: number,
   maxX: number,
   maxY: number,
-  stalk: RotationHandleLayout
+  stalk: RotationHandleLayout | null
 ): void {
+  if (r.readOnly || !hasTransformHandles((maxX - minX) * r.zoom, (maxY - minY) * r.zoom)) return
   r.drawHandle(canvas, minX, minY)
   r.drawHandle(canvas, maxX, minY)
   r.drawHandle(canvas, minX, maxY)
   r.drawHandle(canvas, maxX, maxY)
-  const midX = (minX + maxX) / 2
-  const midY = (minY + maxY) / 2
+  if (!stalk) return
   canvas.drawLine(stalk.edge.x, stalk.edge.y, stalk.handle.x, stalk.handle.y, r.selectionPaint)
   r.drawHandle(canvas, stalk.handle.x, stalk.handle.y)
-  r.drawHandle(canvas, midX, minY)
-  r.drawHandle(canvas, midX, maxY)
-  r.drawHandle(canvas, minX, midY)
-  r.drawHandle(canvas, maxX, midY)
 }
 
 function drawSelectionRect(
@@ -372,12 +358,15 @@ export function drawNodeSelection(
         y1,
         x2,
         y2,
-        rotationHandleLayout(node, createSceneGeometry(graph, preview), r.zoom, {
-          x: x1,
-          y: y1,
-          width: x2 - x1,
-          height: y2 - y1
-        })
+        // A generated frame such as a sticky note may stay upright, and a line turns by its ends.
+        !layerRotates(node) || isLineLike(node)
+          ? null
+          : rotationHandleLayout(node, createSceneGeometry(graph, preview), r.zoom, {
+              x: x1,
+              y: y1,
+              width: x2 - x1,
+              height: y2 - y1
+            })
       )
     },
     preview
@@ -502,17 +491,13 @@ function drawBoundsHandlesScreenSpace(
   maxX: number,
   maxY: number
 ): void {
+  if (!hasTransformHandles(maxX - minX, maxY - minY)) return
   drawHandleScreenSpace(r, canvas, minX, minY)
   drawHandleScreenSpace(r, canvas, maxX, minY)
   drawHandleScreenSpace(r, canvas, minX, maxY)
   drawHandleScreenSpace(r, canvas, maxX, maxY)
   const midX = (minX + maxX) / 2
-  const midY = (minY + maxY) / 2
   const rotationHandleY = minY - ROTATION_HANDLE_DISTANCE
   canvas.drawLine(midX, minY, midX, rotationHandleY, r.selectionPaint)
   drawHandleScreenSpace(r, canvas, midX, rotationHandleY)
-  drawHandleScreenSpace(r, canvas, midX, minY)
-  drawHandleScreenSpace(r, canvas, midX, maxY)
-  drawHandleScreenSpace(r, canvas, minX, midY)
-  drawHandleScreenSpace(r, canvas, maxX, midY)
 }

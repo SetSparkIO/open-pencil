@@ -5,9 +5,9 @@ import * as v from 'valibot'
 
 import { invokeNative } from '#tests/helpers/tauri/invoke'
 
-const HealthJSON = v.pipe(v.string(), v.parseJson(), v.object({ status: v.string() }))
+const healthSchema = v.pipe(v.string(), v.parseJson(), v.object({ status: v.string() }))
 
-const DiscoveryFileJSON = v.pipe(
+const discoveryFileSchema = v.pipe(
   v.string(),
   v.parseJson(),
   v.object({ httpPort: v.number(), authToken: v.string() })
@@ -73,21 +73,10 @@ function mcpFailureDetail(): Promise<string | null> {
   })
 }
 
-/**
- * Restart is offered by the healthy-state button and by the failure alert, so
- * click whichever one is currently rendered.
- */
+/** Restart lives in the Local server section header, whether or not the server failed. */
 function clickRestart(): Promise<void> {
   return browser.execute(() => {
-    const panel = document.querySelector<HTMLElement>(
-      '[data-test-id="settings-mcp-automation-panel"]'
-    )
-    for (const button of panel?.querySelectorAll<HTMLButtonElement>('button') ?? []) {
-      if (button.textContent?.includes('MCP server') && button.offsetParent !== null) {
-        button.click()
-        return
-      }
-    }
+    document.querySelector<HTMLButtonElement>('[data-test-id="settings-mcp-restart"]')?.click()
   })
 }
 
@@ -149,7 +138,7 @@ describe('native MCP server lifecycle', () => {
     await waitForStatus('Running')
     const discoveryPath = process.env.OPENPENCIL_MCP_DISCOVERY_PATH
     assert.ok(discoveryPath, 'discovery path missing from the wdio configuration')
-    const discovery = v.parse(DiscoveryFileJSON, readFileSync(discoveryPath, 'utf8'))
+    const discovery = v.parse(discoveryFileSchema, readFileSync(discoveryPath, 'utf8'))
     assert.ok(discovery.authToken, 'discovery file omitted the auth token')
 
     // The spawned server serves the app: real port, real token.
@@ -157,7 +146,7 @@ describe('native MCP server lifecycle', () => {
       headers: { authorization: `Bearer ${discovery.authToken}` }
     })
     assert.equal(health.status, 200)
-    assert.equal(v.parse(HealthJSON, await health.text()).status, 'ok')
+    assert.equal(v.parse(healthSchema, await health.text()).status, 'ok')
 
     // Hiding the resolved binary must report the missing install, and restoring
     // it must recover without relaunching the app.

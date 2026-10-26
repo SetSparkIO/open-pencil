@@ -1,15 +1,14 @@
 import * as v from 'valibot'
 
-import { toolNumber, nodeIdInput } from '#core/tools/input'
-import { defineTool, nodeNotFound } from '#core/tools/schema'
+import { toolNumber, nodeIdInputSchema, defineTool, nodeNotFound } from '#core/tools/schema'
 
 export const setRotation = defineTool({
   name: 'set_rotation',
 
   description: 'Set rotation angle of a node in degrees.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     angle: toolNumber(v.pipe(v.number(), v.description('Rotation angle in degrees')))
   }),
   execute: (figma, { id, angle }) => {
@@ -25,8 +24,8 @@ export const setOpacity = defineTool({
 
   description: 'Set opacity of a node (0-1).',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     value: toolNumber(
       v.pipe(v.number(), v.minValue(0), v.maxValue(1), v.description('Opacity (0-1)'))
     )
@@ -44,8 +43,8 @@ export const setRadius = defineTool({
 
   description: 'Set corner radius. Use individual corners for independent values.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     radius: v.optional(
       toolNumber(v.pipe(v.number(), v.minValue(0), v.description('Corner radius for all corners')))
     ),
@@ -91,8 +90,8 @@ export const setMinMax = defineTool({
 
   description: 'Set min/max width and height constraints on a node.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     min_width: v.optional(
       toolNumber(v.pipe(v.number(), v.minValue(0), v.description('Minimum width')))
     ),

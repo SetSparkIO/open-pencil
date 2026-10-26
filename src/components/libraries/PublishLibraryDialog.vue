@@ -7,7 +7,7 @@ import {
   publishableLibraryRoots,
   readSourceLibraryPublication
 } from '@open-pencil/core/library'
-import { useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
 
 import { useEditorStore } from '@/app/editor/active-store'
 import { publishLibraryDialogOpen, useLibraryService } from '@/app/libraries'
@@ -211,7 +211,7 @@ async function publish() {
           </label>
         </div>
       </div>
-      <p v-if="error" role="alert" class="text-xs text-danger">{{ error }}</p>
+      <p v-if="error" role="alert" class="text-xs text-error">{{ error }}</p>
     </form>
     <AppDialogFooter>
       <AppButton size="md" @click="publishLibraryDialogOpen = false">
