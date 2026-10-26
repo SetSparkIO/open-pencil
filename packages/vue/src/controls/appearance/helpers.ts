@@ -1,8 +1,10 @@
+import { compact } from 'es-toolkit'
 import { computed } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 
-import type { Editor } from '@open-pencil/core/editor'
+import type { Editor } from '@open-pencil/core'
 import type { BlendMode, SceneNode } from '@open-pencil/scene-graph'
+import { independentCornerChanges } from '@open-pencil/scene-graph/variables'
 
 import type { CornerGeometryKey, CornerRadiusKey } from '#vue/controls/appearance/types'
 import { MIXED, type MixedValue } from '#vue/controls/node-props/use'
@@ -12,8 +14,19 @@ const CORNER_RADIUS_TYPES = new Set([
   'ROUNDED_RECTANGLE',
   'FRAME',
   'COMPONENT',
-  'INSTANCE'
+  'INSTANCE',
+  'POLYGON',
+  'STAR',
+  'SHAPE_WITH_TEXT'
 ])
+
+/**
+ * A polygon's, star's or shape with text's corners share one radius, so Figma offers no
+ * per-corner radii for them.
+ */
+const SHARED_RADIUS_TYPES = new Set(['POLYGON', 'STAR', 'SHAPE_WITH_TEXT'])
+
+const POINT_COUNT_TYPES = new Set(['POLYGON', 'STAR'])
 
 const CORNER_PATHS: CornerRadiusKey[] = [
   'topLeftRadius',
@@ -32,6 +45,17 @@ type AppearanceStateOptions = {
 
 type AppearanceActionOptions = AppearanceStateOptions & {
   editor: Editor
+}
+
+function supportsCornerRadius(node: SceneNode) {
+  return CORNER_RADIUS_TYPES.has(node.type)
+}
+
+/** The value shared by every node, MIXED when they differ, or `empty` when there are none. */
+function sharedValue<T>(values: readonly T[], empty: T): MixedValue<T> {
+  if (values.length === 0) return empty
+  const [first] = values
+  return values.every((value) => value === first) ? first : MIXED
 }
 
 function cornersHaveEquivalentBindings(node: SceneNode): boolean {
@@ -59,18 +83,30 @@ export function createAppearanceState({
   merged,
   expandedCornerNodeId
 }: AppearanceStateOptions) {
+  // Figma shows the radius for any multi-selection and edits only the layers that have one; with
+  // none among them the field is disabled.
+  const cornerNodes = computed(() => nodes.value.filter(supportsCornerRadius))
   const hasCornerRadius = computed(() => {
-    if (isMulti.value) return nodes.value.every((n) => CORNER_RADIUS_TYPES.has(n.type))
-    return node.value ? CORNER_RADIUS_TYPES.has(node.value.type) : false
+    if (isMulti.value) return true
+    return node.value ? supportsCornerRadius(node.value) : false
+  })
+  const cornerRadiusDisabled = computed(() => isMulti.value && cornerNodes.value.length === 0)
+  const splitsCorners = computed(() => {
+    const targets = isMulti.value ? cornerNodes.value : compact([node.value])
+    return targets.every((target) => !SHARED_RADIUS_TYPES.has(target.type))
   })
 
   const independentCorners = computed(() => {
-    if (isMulti.value) return merged('independentCorners')
+    if (isMulti.value)
+      return sharedValue(
+        cornerNodes.value.map((n) => n.independentCorners),
+        false
+      )
     return node.value?.independentCorners ?? false
   })
 
   const showIndependentCorners = computed(() => {
-    if (isMulti.value) return false
+    if (isMulti.value || !splitsCorners.value) return false
     const selected = node.value
     return selected
       ? expandedCornerNodeId?.value === selected.id ||
@@ -80,22 +116,63 @@ export function createAppearanceState({
   })
 
   const cornerRadiusValue = computed(() => {
-    if (isMulti.value) return merged('cornerRadius')
+    if (isMulti.value)
+      return sharedValue(
+        cornerNodes.value.map((n) => n.cornerRadius),
+        0
+      )
     const selected = node.value
-    return selected && cornersHaveEquivalentBindings(selected) && !hasUnequalCorners(selected)
+    return selected &&
+      splitsCorners.value &&
+      cornersHaveEquivalentBindings(selected) &&
+      !hasUnequalCorners(selected)
       ? selected.topLeftRadius
       : (selected?.cornerRadius ?? 0)
   })
 
   const cornerRadiusBindingPaths = computed<Array<CornerRadiusKey | 'cornerRadius'>>(() => {
     const selected = node.value
-    return selected && cornersHaveEquivalentBindings(selected) && !hasUnequalCorners(selected)
+    return selected &&
+      splitsCorners.value &&
+      cornersHaveEquivalentBindings(selected) &&
+      !hasUnequalCorners(selected)
       ? CORNER_PATHS
       : ['cornerRadius']
   })
 
+  // Figma shows a polygon's or star's point count, and a star's inner ratio, while every selected
+  // layer has one.
+  const selectedNodes = computed(() => (isMulti.value ? nodes.value : compact([node.value])))
+  const hasPointCount = computed(
+    () =>
+      selectedNodes.value.length > 0 &&
+      selectedNodes.value.every((target) => POINT_COUNT_TYPES.has(target.type))
+  )
+  const hasStarRatio = computed(
+    () =>
+      selectedNodes.value.length > 0 &&
+      selectedNodes.value.every((target) => target.type === 'STAR')
+  )
+  const pointCount = computed(() =>
+    sharedValue(
+      selectedNodes.value.map((target) => target.pointCount),
+      0
+    )
+  )
+  const starRatioPercent = computed(() =>
+    sharedValue(
+      selectedNodes.value.map((target) => Math.round(target.starInnerRadius * 1000) / 10),
+      0
+    )
+  )
+
   const cornerSmoothingPercent = computed(() => {
-    const value = merged('cornerSmoothing')
+    const value = isMulti.value
+      ? sharedValue(
+          cornerNodes.value.map((n) => n.cornerSmoothing),
+          0
+        )
+      : merged('cornerSmoothing')
     return value === MIXED ? MIXED : Math.round(Math.max(0, Math.min(value, 1)) * 100)
   })
 
@@ -117,6 +194,12 @@ export function createAppearanceState({
 
   return {
     hasCornerRadius,
+    cornerRadiusDisabled,
+    splitsCorners,
+    hasPointCount,
+    hasStarRatio,
+    pointCount,
+    starRatioPercent,
     independentCorners,
     showIndependentCorners,
     cornerRadiusValue,
@@ -159,9 +242,7 @@ export function createAppearanceActions({
       if (liveNodes.length === 0) return
       const allVisible = liveNodes.every((n) => n.visible)
       editor.undo.runBatch('Toggle visibility', () => {
-        for (const n of liveNodes) {
-          editor.updateNodeWithUndo(n.id, { visible: !allVisible }, 'Toggle visibility')
-        }
+        for (const n of liveNodes) editor.setNodeVisibility(n.id, !allVisible)
       })
       return
     }
@@ -170,7 +251,7 @@ export function createAppearanceActions({
     if (!selected) return
     const liveNode = editor.getNode(selected.id)
     if (!liveNode) return
-    editor.updateNodeWithUndo(liveNode.id, { visible: !liveNode.visible }, 'Toggle visibility')
+    editor.setNodeVisibility(liveNode.id, !liveNode.visible)
   }
 
   function toggleIndependentCorners() {
@@ -185,8 +266,7 @@ export function createAppearanceActions({
       expandedCornerNodeId.value = expandedCornerNodeId.value === selected.id ? null : selected.id
       return
     }
-    const targets = isMulti.value ? [...nodes.value] : []
-    if (!isMulti.value && selected) targets.push(selected)
+    const targets = cornerTargets()
     if (targets.length === 0) return
     const makeIndependent = !targets.every(
       (target) => target.independentCorners || hasUnequalCorners(target)
@@ -200,13 +280,7 @@ export function createAppearanceActions({
             if (target.independentCorners) continue
             editor.updateNodeWithUndo(
               target.id,
-              {
-                independentCorners: true,
-                topLeftRadius: target.cornerRadius,
-                topRightRadius: target.cornerRadius,
-                bottomRightRadius: target.cornerRadius,
-                bottomLeftRadius: target.cornerRadius
-              } as Partial<SceneNode>,
+              independentCornerChanges(target),
               'Independent corner radii'
             )
           } else {
@@ -230,7 +304,7 @@ export function createAppearanceActions({
   }
 
   function cornerTargets() {
-    if (isMulti.value) return nodes.value
+    if (isMulti.value) return nodes.value.filter(supportsCornerRadius)
     const selected = node.value
     return selected ? [selected] : []
   }

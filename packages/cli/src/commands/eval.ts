@@ -1,6 +1,7 @@
 import { defineCommand } from 'citty'
 
-import { FigmaAPI } from '@open-pencil/core/figma-api'
+import { FigmaAPI, flushPendingLayout } from '@open-pencil/core/figma-api'
+import { compileScript } from '@open-pencil/core/tools'
 
 import { isAppMode, requireFile, rpc } from '#cli/app/client'
 import { appTargetOptions, appTargetRPCArgs } from '#cli/app/target'
@@ -8,6 +9,7 @@ import { printError } from '#cli/format'
 import {
   documentWriteOptions,
   loadDocument,
+  measureDocumentText,
   populateWholeDocument,
   writeFigDocument
 } from '#cli/headless'
@@ -69,21 +71,12 @@ export default defineCommand({
     const file = requireFile(args.file)
     const graph = await loadDocument(file)
     populateWholeDocument(graph)
+    await measureDocumentText(graph)
     const figma = new FigmaAPI(graph)
-
-    type AsyncFunctionConstructor = new (
-      ...args: string[]
-    ) => (...args: unknown[]) => Promise<unknown>
-    const AsyncFunction = Object.getPrototypeOf(async () => undefined)
-      .constructor as AsyncFunctionConstructor
-    const wrappedCode = code.trim().startsWith('return')
-      ? code
-      : `return (async () => { ${code} })()`
 
     let result: unknown
     try {
-      const fn = new AsyncFunction('figma', wrappedCode)
-      result = await fn(figma)
+      result = await compileScript(code)(figma)
     } catch (err) {
       printError(err instanceof Error ? err.message : String(err))
       process.exit(1)
@@ -95,6 +88,8 @@ export default defineCommand({
 
     if (args.write || args.output) {
       const outPath = args.output ? args.output : file
+      // A script's edits that nothing read yet are laid out before saving, as Figma saves them.
+      flushPendingLayout(graph)
       await writeFigDocument(graph, outPath)
       if (!args.quiet) {
         console.error(`Written to ${outPath}`)

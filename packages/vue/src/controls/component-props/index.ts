@@ -1,4 +1,4 @@
 export * from './authoring'
+export * from './bindings'
 export * from './model'
-export * from './slots'
 export * from './use'

@@ -9,6 +9,7 @@ export interface SidebarLabels {
   text: string
   pen: string
   vectorEditing: string
+  icons: string
   layers: string
   contextMenu: string
   exporting: string
@@ -16,12 +17,15 @@ export interface SidebarLabels {
   components: string
   variables: string
   checkingDesigns: string
+  openPencilCloud: string
+  cloudStorage: string
   overview: string
   gettingStarted: string
   features: string
   architecture: string
   techStack: string
   comparison: string
+  privacy: string
   figmaMatrix: string
 }
 
@@ -167,12 +171,16 @@ export const EN: SidebarLabels = {
   components: 'Components',
   variables: 'Variables',
   checkingDesigns: 'Checking Designs',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Cloud Storage',
+  icons: 'Icons',
   overview: 'Overview',
   gettingStarted: 'Getting Started',
   features: 'Features',
   architecture: 'Architecture',
   techStack: 'Tech Stack',
   comparison: 'Comparison',
+  privacy: 'Privacy',
   figmaMatrix: 'Figma Feature Matrix'
 }
 export const DE: SidebarLabels = {
@@ -193,12 +201,16 @@ export const DE: SidebarLabels = {
   components: 'Komponenten',
   variables: 'Variablen',
   checkingDesigns: 'Designs prüfen',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Cloud-Speicher',
+  icons: 'Symbole',
   overview: 'Überblick',
   gettingStarted: 'Erste Schritte',
   features: 'Funktionen',
   architecture: 'Architektur',
   techStack: 'Tech-Stack',
   comparison: 'Vergleich',
+  privacy: 'Datenschutz',
   figmaMatrix: 'Figma-Funktionsmatrix'
 }
 export const IT: SidebarLabels = {
@@ -219,12 +231,16 @@ export const IT: SidebarLabels = {
   components: 'Componenti',
   variables: 'Variabili',
   checkingDesigns: 'Verificare i design',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Archiviazione cloud',
+  icons: 'Icone',
   overview: 'Panoramica',
   gettingStarted: 'Per iniziare',
   features: 'Funzionalità',
   architecture: 'Architettura',
   techStack: 'Stack tecnologico',
   comparison: 'Confronto',
+  privacy: 'Privacy',
   figmaMatrix: 'Matrice funzionalità Figma'
 }
 export const FR: SidebarLabels = {
@@ -245,12 +261,16 @@ export const FR: SidebarLabels = {
   components: 'Composants',
   variables: 'Variables',
   checkingDesigns: 'Vérifier les designs',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Stockage cloud',
+  icons: 'Icônes',
   overview: 'Vue d’ensemble',
   gettingStarted: 'Premiers pas',
   features: 'Fonctionnalités',
   architecture: 'Architecture',
   techStack: 'Stack technique',
   comparison: 'Comparaison',
+  privacy: 'Confidentialité',
   figmaMatrix: 'Matrice des fonctionnalités Figma'
 }
 export const ES: SidebarLabels = {
@@ -271,12 +291,16 @@ export const ES: SidebarLabels = {
   components: 'Componentes',
   variables: 'Variables',
   checkingDesigns: 'Revisar diseños',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Almacenamiento en la nube',
+  icons: 'Iconos',
   overview: 'Resumen',
   gettingStarted: 'Primeros pasos',
   features: 'Características',
   architecture: 'Arquitectura',
   techStack: 'Stack tecnológico',
   comparison: 'Comparación',
+  privacy: 'Privacidad',
   figmaMatrix: 'Matriz de funcionalidades Figma'
 }
 export const PL: SidebarLabels = {
@@ -297,12 +321,16 @@ export const PL: SidebarLabels = {
   components: 'Komponenty',
   variables: 'Zmienne',
   checkingDesigns: 'Sprawdzanie projektów',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Przechowywanie w chmurze',
+  icons: 'Ikony',
   overview: 'Przegląd',
   gettingStarted: 'Rozpoczęcie pracy',
   features: 'Funkcje',
   architecture: 'Architektura',
   techStack: 'Stack technologiczny',
   comparison: 'Porównanie',
+  privacy: 'Prywatność',
   figmaMatrix: 'Matryca funkcji Figma'
 }
 export const RU: SidebarLabels = {
@@ -323,11 +351,15 @@ export const RU: SidebarLabels = {
   components: 'Компоненты',
   variables: 'Переменные',
   checkingDesigns: 'Проверка дизайна',
+  openPencilCloud: 'OpenPencil Cloud',
+  cloudStorage: 'Облачное хранилище',
+  icons: 'Иконки',
   overview: 'Обзор',
   gettingStarted: 'Начало работы',
   features: 'Возможности',
   architecture: 'Архитектура',
   techStack: 'Технологии',
   comparison: 'Сравнение',
+  privacy: 'Конфиденциальность',
   figmaMatrix: 'Матрица функций Figma'
 }

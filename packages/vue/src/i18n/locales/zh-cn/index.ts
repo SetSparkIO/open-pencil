@@ -2,14 +2,18 @@ import type { ComponentsJSON } from '@nanostores/i18n'
 
 import ai from './ai.json'
 import automation from './automation.json'
+import cloud from './cloud/editor.json'
+import cloudPortal from './cloud/portal.json'
 import code from './code.json'
 import collaboration from './collaboration.json'
 import commands from './commands.json'
+import comments from './comments.json'
 import common from './common.json'
 import credentials from './credentials.json'
 import designCheck from './design-check.json'
 import diagnostics from './diagnostics.json'
 import editor from './editor.json'
+import figjam from './figjam.json'
 import files from './files.json'
 import fonts from './fonts.json'
 import media from './media.json'
@@ -20,23 +24,29 @@ import recovery from './recovery.json'
 import rename from './rename.json'
 import rendering from './rendering.json'
 import settings from './settings.json'
+import shapes from './shapes.json'
+import statuses from './statuses.json'
 import storage from './storage.json'
 import tools from './tools.json'
 import updates from './updates.json'
-import variableTypes from './variable-types.json'
-import variables from './variables.json'
+import variables from './variables/panel.json'
+import variableTypes from './variables/types.json'
 
 export default {
   ai,
   automation,
+  cloud,
+  cloudPortal,
   code,
   collaboration,
   commands,
+  comments,
   common,
   credentials,
   designCheck,
   diagnostics,
   editor,
+  figjam,
   files,
   fonts,
   media,
@@ -47,6 +57,8 @@ export default {
   rendering,
   rename,
   settings,
+  shapes,
+  statuses,
   storage,
   tools,
   updates,

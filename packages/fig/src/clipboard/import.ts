@@ -3,29 +3,35 @@ import { decode as decodeText, toUint8Array, isValid } from 'js-base64'
 import * as v from 'valibot'
 
 import type { NodeChange as KiwiNodeChange } from '@open-pencil/kiwi/fig/codec'
+import { decompressFigKiwiDataAsync, parseFigKiwiChunks } from '@open-pencil/kiwi/fig/container'
 import { decodeBinarySchema, compileSchema, ByteBuffer } from '@open-pencil/kiwi/schema-runtime'
 
-import { parseFigKiwiChunks, decompressFigKiwiDataAsync } from '../node-change'
 import { isFigClipboardVisualType } from '../node-classification'
 
-const FigmaClipboardMetaJSON = v.pipe(
+const figmaClipboardMetaSchema = v.pipe(
   v.string(),
   v.parseJson(),
   v.object({ fileKey: v.string(), pasteID: v.number(), dataType: v.string() })
 )
 
-type FigmaClipboardMeta = v.InferOutput<typeof FigmaClipboardMetaJSON>
+type FigmaClipboardMeta = v.InferOutput<typeof figmaClipboardMetaSchema>
 
-export async function parseFigmaClipboard(
-  html: string
-): Promise<{ nodes: KiwiNodeChange[]; meta: FigmaClipboardMeta; blobs: Uint8Array[] } | null> {
+export interface ParsedFigmaClipboard {
+  nodes: KiwiNodeChange[]
+  meta: FigmaClipboardMeta
+  blobs: Uint8Array[]
+  /** `STYLE_PROPERTIES` for Copy properties, which Paste skips and Paste properties reads. */
+  assetType: string
+}
+
+export async function parseFigmaClipboard(html: string): Promise<ParsedFigmaClipboard | null> {
   const metaMatch = html.match(/\(figmeta\)(.*?)\(\/figmeta\)/)
   const bufMatch = html.match(/\(figma\)(.*?)\(\/figma\)/s)
   if (!metaMatch || !bufMatch) return null
 
   // Clipboard HTML comes from other applications, so its Base64 is checked first.
   if (!isValid(metaMatch[1]) || !isValid(bufMatch[1])) throw new TypeError('Invalid Base64 string')
-  const parsedMeta = v.safeParse(FigmaClipboardMetaJSON, decodeText(metaMatch[1]))
+  const parsedMeta = v.safeParse(figmaClipboardMetaSchema, decodeText(metaMatch[1]))
   if (!parsedMeta.success) return null
   const meta = parsedMeta.output
   const binary = toUint8Array(bufMatch[1])
@@ -42,13 +48,14 @@ export async function parseFigmaClipboard(
     const msg = compiled.decodeMessage(dataRaw) as {
       nodeChanges?: KiwiNodeChange[]
       blobs?: Array<{ bytes: Uint8Array | Record<string, number> }>
+      pasteAssetType?: string
     }
 
     const blobs: Uint8Array[] = (msg.blobs ?? []).map((b) =>
       b.bytes instanceof Uint8Array ? b.bytes : new Uint8Array(Object.values(b.bytes))
     )
 
-    return { nodes: msg.nodeChanges ?? [], meta, blobs }
+    return { nodes: msg.nodeChanges ?? [], meta, blobs, assetType: msg.pasteAssetType ?? 'UNKNOWN' }
   } catch {
     return null
   }

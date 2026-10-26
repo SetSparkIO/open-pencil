@@ -11,6 +11,7 @@
   "importing": "Importando…",
   "importToCanvas": "Importar al lienzo",
   "newTab": "Nueva pestaña",
+  "home": "Inicio",
   "closeTab": "Cerrar {name}",
   "clipboardImageUnavailableWeb": "El diseño pegado contiene 1 imagen que no se puede cargar en la aplicación web. Usa la aplicación de escritorio para incluirla.",
   "clipboardImagesUnavailableWeb": "El diseño pegado contiene {count} imágenes que no se pueden cargar en la aplicación web. Usa la aplicación de escritorio para incluirlas.",
@@ -26,5 +27,6 @@
   "noMatchingFiles": "Ningún archivo coincide con «{query}».",
   "saveAsPrompt": "Guardar como:",
   "browserFileAPINotSupported": "Tu navegador no admite la API de archivos locales. Los archivos se descargarán en lugar de guardarse en el mismo lugar.",
-  "browserFileAPIDisabledInBrave": "Brave desactiva la API de archivos locales de forma predeterminada, por lo que los archivos se descargarán en lugar de guardarse en su sitio. Para guardar en su sitio, activa brave://flags/#file-system-access-api y reinicia Brave."
+  "browserFileAPIDisabledInBrave": "Brave desactiva la API de archivos locales de forma predeterminada, por lo que los archivos se descargarán en lugar de guardarse en su sitio. Para guardar en su sitio, activa brave://flags/#file-system-access-api y reinicia Brave.",
+  "newDesignIn": "Nuevo diseño en {place}"
 }

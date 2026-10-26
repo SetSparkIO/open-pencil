@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { computed, effectScope } from 'vue'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { createEditor } from '@open-pencil/core'
 
 import { createLayoutActions } from '#vue/controls/layout/helpers'
 import { usePropScrub } from '#vue/controls/prop-scrub/use'
@@ -48,8 +48,7 @@ describe('property previews', () => {
       const original = frame.width
       const actions = createLayoutActions({
         editor,
-        node: computed(() => frame),
-        isInAutoLayout: computed(() => false)
+        node: computed(() => frame)
       })
       actions.updateAxisSize('width', 200)
       expect(frame.primaryAxisSizing).toBe('FIXED')

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import Fuse from 'fuse.js'
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -18,9 +17,11 @@ import {
 import { tv } from 'tailwind-variants'
 import { computed, ref } from 'vue'
 
-import { useRetainedPopup } from '@open-pencil/vue'
+import { useRetainedPopup } from '@open-pencil/vue/lifecycle/retention'
+import { fuzzySearch } from '@open-pencil/vue/shared/search'
 
 import type { ComponentUI } from '@/components/ui/types'
+import type { ControlSize } from '@/theme/control'
 import theme from '@/theme/select/combobox'
 import type { AppComboboxTheme } from '@/theme/select/combobox'
 
@@ -41,6 +42,10 @@ interface AppComboboxProps {
   emptyLabel?: string
   disabled?: boolean
   resultLimit?: number
+  /** How the open list lines up with the trigger; `end` for a trigger at the end of a field. */
+  align?: 'start' | 'center' | 'end'
+  /** The height on the control scale; the design panel's dense `xs` unless a form asks. */
+  size?: ControlSize
   ui?: ComponentUI<AppComboboxTheme>
 }
 
@@ -54,6 +59,8 @@ const {
   emptyLabel = 'No results',
   disabled = false,
   resultLimit = 100,
+  align = 'start',
+  size,
   ui
 } = defineProps<AppComboboxProps>()
 
@@ -64,21 +71,13 @@ const { portalActive } = useRetainedPopup(open, () => updateOpen(false))
 const styles = tv(theme)()
 
 const selectedOption = computed(() => options.find((option) => option.value === modelValue.value))
-const searchIndex = computed(
-  () =>
-    new Fuse(options, {
-      keys: ['label', 'value', 'description', 'meta'],
-      threshold: 0.2,
-      ignoreLocation: true
-    })
-)
 const filteredOptions = computed(() => {
   const query = searchTerm.value.trim()
   if (!query) return options.slice(0, resultLimit)
-  return searchIndex.value
-    .search(query)
-    .slice(0, resultLimit)
-    .map((result) => result.item)
+  return fuzzySearch(options, ['label', 'value', 'description', 'meta'], query).slice(
+    0,
+    resultLimit
+  )
 })
 const groupedOptions = computed(() => {
   const groups = new Map<string, AppComboboxOption[]>()
@@ -115,10 +114,10 @@ function updateOpen(value: boolean): void {
       <ComboboxTrigger
         v-bind="$attrs"
         :aria-label="label"
-        :class="styles.trigger({ class: ui?.trigger })"
+        :class="styles.trigger({ size, class: ui?.trigger })"
       >
         <slot name="value" :option="selectedOption">
-          <span :class="styles.value({ class: ui?.value })">
+          <span :class="styles.value({ size, class: ui?.value })">
             {{ selectedOption?.label ?? (modelValue || placeholder) }}
           </span>
         </slot>
@@ -129,6 +128,7 @@ function updateOpen(value: boolean): void {
     <ComboboxPortal v-if="portalActive">
       <ComboboxContent
         position="popper"
+        :align="align"
         :side-offset="2"
         :class="styles.content({ class: ui?.content })"
       >
@@ -167,7 +167,7 @@ function updateOpen(value: boolean): void {
               :class="styles.item({ class: ui?.item })"
             >
               <ComboboxItemIndicator :class="styles.indicator({ class: ui?.indicator })">
-                <icon-lucide-check class="size-3 text-accent" />
+                <icon-lucide-check class="size-3 text-primary" />
               </ComboboxItemIndicator>
               <slot name="option" :option="option">
                 <div class="min-w-0 flex-1">

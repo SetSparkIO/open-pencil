@@ -1,5 +1,17 @@
 {
   "toolOptions": "{tool}选项",
   "removeGradientStop": "删除渐变色标",
-  "showUI": "显示界面（{shortcut}）"
+  "cornerRadius": "圆角",
+  "pointCount": "数量",
+  "starRatio": "比例",
+  "arcStart": "起点",
+  "arcSweep": "扫掠",
+  "arcRatio": "比例",
+  "stickyPlaceholder": "输入任意内容，@提及任何人",
+  "connectorLabelPlaceholder": "添加文本",
+  "showUI": "显示界面（{shortcut}）",
+  "previewing": "预览中",
+  "resetPreview": "重置",
+  "leavePreview": "退出预览 ({shortcut})",
+  "startPreview": "预览 ({shortcut})"
 }

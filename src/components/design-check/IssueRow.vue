@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useDesignCheckMessages } from '@open-pencil/vue'
+import { useDesignCheckMessages } from '@open-pencil/vue/i18n'
 
 import Tip from '@/components/ui/overlay/Tip.vue'
 import { designCheck } from '@/theme/design-check'
@@ -55,6 +55,7 @@ const styles = designCheck()
           v-else-if="row.swatch?.kind === 'contrast'"
           :class="styles.contrastSwatch()"
           :style="{ backgroundColor: row.swatch.background, color: row.swatch.foreground }"
+          data-contrast-sample
           aria-hidden="true"
         >
           Aa

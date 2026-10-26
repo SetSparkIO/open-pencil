@@ -4,20 +4,29 @@ import type { SnapGuide } from '@open-pencil/scene-graph/snap'
 
 import type { GuideOverlayState } from '#core/canvas/guides/types'
 import type { DesignIssueOverlay } from '#core/canvas/issues/types'
+import type { ConnectorTarget } from '#core/editor/connectors/attach'
+import type { ShapeHandleHover, GradientEdit, PencilState } from '#core/editor/types'
 import type { RotationPreview } from '#core/geometry'
 import type { TextEditor } from '#core/text/editor'
+
+/** Selection chrome on the canvas and the text drawn on it, such as size pills and ruler badges. */
+export interface SelectionTheme {
+  color: Color
+  foreground: Color
+}
 
 export interface RulerTheme {
   background: Color
   tick: Color
   text: Color
-  label: Color
 }
 
 export type MeasurementMode = 'off' | 'shallow' | 'deep'
 
 /** Where a collaborator or an agent is working, in world coordinates. */
 export interface PresenceCursor {
+  /** Who it is, kept between updates; editors use it to glide a cursor rather than jump it. */
+  id?: string
   kind: 'person' | 'agent'
   name: string
   /** A person's color, or the color of the person who runs the agent. */
@@ -25,10 +34,22 @@ export interface PresenceCursor {
   x: number
   y: number
   selection?: string[]
+  /** Outlines in world coordinates of what is not a layer yet, such as streamed JSX. */
+  outline?: Rect[]
 }
 
 export interface RenderOverlays {
+  /** Whether the canvas previews: it draws the design without labels or editing outlines. */
+  playing?: boolean
+  /** Nodes a previewing canvas draws from its preview session instead of the document. */
+  /** Layers a previewing canvas leaves to its live islands. */
+  playIslands?: ReadonlySet<string>
   hoveredNodeId?: string | null
+  /** Draw the pixel grid when zoomed in far enough. */
+  showPixelGrid?: boolean
+  /** The gradient whose handles to draw in place of the selection. */
+  gradientEdit?: GradientEdit | null
+  transforming?: boolean
   measurementMode?: MeasurementMode
   enteredContainerId?: string | null
   editingTextId?: string | null
@@ -50,6 +71,10 @@ export interface RenderOverlays {
     index?: number
     side?: 'top' | 'right' | 'bottom' | 'left'
   } | null
+  /** The selected shape's handles and the label of the one in use. */
+  shapeHandleHover?: ShapeHandleHover | null
+  /** The layer a connector end would attach to, outlined with its magnets. */
+  connectorTarget?: ConnectorTarget | null
   penState?: {
     vertices: Vector[]
     segments: Array<{
@@ -65,6 +90,7 @@ export interface RenderOverlays {
     cursorX?: number
     cursorY?: number
   } | null
+  pencilState?: PencilState | null
   nodeEditState?: {
     nodeId: string
     vertices: VectorVertex[]
@@ -76,8 +102,13 @@ export interface RenderOverlays {
     }>
     regions: VectorRegion[]
     selectedVertexIndices: Set<number>
+    selectedSegmentIndices?: Set<number>
     selectedHandles?: Set<number>
     hoveredHandleInfo?: { segmentIndex: number; tangentField: 'tangentStart' | 'tangentEnd' } | null
+    /** The region under the pointer, hatched as in Figma. */
+    hoveredRegion?: number | null
+    /** Regions picked by clicking inside them, hatched while selected. */
+    selectedRegions?: Set<number>
   } | null
   presenceCursors?: PresenceCursor[]
   designIssues?: DesignIssueOverlay | null

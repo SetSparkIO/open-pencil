@@ -2,8 +2,7 @@ import { orderBy, sortBy } from 'es-toolkit/array'
 import { meanBy } from 'es-toolkit/math'
 import * as v from 'valibot'
 
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 interface SizedItem {
   width: number
@@ -32,7 +31,7 @@ export const analyzeClusters = defineTool({
     'Find repeated design patterns (potential components). Groups nodes by structural signature — type, size, and child structure.',
   execution: { kind: 'sync', mutation: 'none' },
   exposure: { webmcp: false },
-  input: v.object({
+  input: v.strictObject({
     min_count: v.optional(
       toolNumber(v.pipe(v.number(), v.description('Min instances to form a cluster (default: 2)')))
     ),

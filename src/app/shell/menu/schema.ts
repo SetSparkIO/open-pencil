@@ -1,4 +1,4 @@
-import type { EditorCommandId } from '@open-pencil/vue'
+import type { EditorCommandId } from '@open-pencil/vue/editor/commands'
 
 export type AppMenuTarget = 'all' | 'browser' | 'native'
 
@@ -13,6 +13,7 @@ export type AppMenuIcon =
   | 'save'
   | 'settings'
   | 'type'
+  | 'variables'
   | 'undo'
   | 'zoom-in'
   | 'zoom-out'
@@ -21,6 +22,7 @@ export type AppMenuPaletteLabel =
   | 'exportSelectionAsPNG'
   | 'exportSelectionAsSVG'
   | 'exportSelectionAsPPTX'
+  | 'exportSelectionAsDrawIO'
   | 'exportSelectionAsFig'
 
 export interface AppMenuPaletteMetadata {
@@ -32,6 +34,10 @@ export interface AppMenuPaletteMetadata {
 
 export type AppMenuHandler = 'editor' | 'shell'
 
+/** A feature an item waits for: it shows only while the feature is available (`./features`). */
+/** Items shown only for a document backed by a file on disk. */
+export type AppMenuFeature = 'local-file' | 'cloud-document'
+
 export interface AppMenuActionItem {
   type?: 'item'
   id: string
@@ -42,6 +48,7 @@ export interface AppMenuActionItem {
   checkbox?: boolean
   target?: AppMenuTarget
   handler?: AppMenuHandler
+  feature?: AppMenuFeature
   palette?: AppMenuPaletteMetadata
   sub?: AppMenuEntry[]
 }
@@ -60,6 +67,14 @@ export interface AppMenuGroupSchema {
   items: AppMenuEntry[]
 }
 
+/** Settings…, where each platform expects it: the macOS application menu, otherwise File. */
+const SETTINGS_MENU_ITEM = {
+  id: 'settings',
+  label: 'Settings…',
+  shortcut: 'MOD+,',
+  accelerator: 'CmdOrCtrl+,'
+} satisfies AppMenuActionItem
+
 export const APP_MENU_SCHEMA = [
   {
     label: 'File',
@@ -68,10 +83,19 @@ export const APP_MENU_SCHEMA = [
       { id: 'new', label: 'New', shortcut: 'MOD+N' },
       { id: 'open', label: 'Open…', shortcut: 'MOD+O' },
       { id: 'open-recent', label: 'Open Recent', target: 'native' },
-      { id: 'open-storage-workspace', label: 'Open Storage Workspace…', handler: 'shell' },
+      { id: 'browse-files', label: 'Browse Files…', handler: 'shell' },
+      { id: 'open-tour', label: 'Open the Tour', handler: 'shell' },
       { type: 'separator' },
       { id: 'save', label: 'Save', shortcut: 'MOD+S' },
       { id: 'save-as', label: 'Save As…', shortcut: 'MOD+SHIFT+S' },
+      { id: 'save-to', label: 'Save To…' },
+      {
+        id: 'save-version',
+        label: 'Save to Version History…',
+        shortcut: 'ALT+MOD+S',
+        feature: 'cloud-document'
+      },
+      { id: 'version-history', label: 'Show Version History', feature: 'cloud-document' },
       { type: 'separator' },
       {
         id: 'export-selection',
@@ -95,6 +119,11 @@ export const APP_MENU_SCHEMA = [
             palette: { icon: 'download', label: 'exportSelectionAsPPTX' }
           },
           {
+            id: 'export-drawio',
+            label: 'draw.io',
+            palette: { icon: 'download', label: 'exportSelectionAsDrawIO' }
+          },
+          {
             id: 'export-fig',
             label: '.fig',
             palette: { icon: 'download', label: 'exportSelectionAsFig' }
@@ -102,8 +131,11 @@ export const APP_MENU_SCHEMA = [
         ]
       },
       { type: 'separator' },
-      { id: 'autosave', label: 'Autosave', checkbox: true },
-      { id: 'close', label: 'Close Tab', shortcut: 'MOD+W' }
+      { id: 'autosave', label: 'Autosave', checkbox: true, feature: 'local-file' },
+      { id: 'close', label: 'Close Tab', shortcut: 'MOD+W' },
+      // Windows, Linux, and the browser menu; macOS shows it in the application menu instead.
+      { type: 'separator' },
+      { ...SETTINGS_MENU_ITEM, handler: 'shell' }
     ]
   },
   {
@@ -171,12 +203,38 @@ export const APP_MENU_SCHEMA = [
       { id: 'zoom-in', label: 'Zoom In', shortcut: 'MOD+=' },
       { id: 'zoom-out', label: 'Zoom Out', shortcut: 'MOD+-' },
       { type: 'separator' },
+      {
+        id: 'view.zoomPreviousFrame',
+        label: 'Zoom to Previous Frame',
+        command: 'view.zoomPreviousFrame'
+      },
+      { id: 'view.zoomNextFrame', label: 'Zoom to Next Frame', command: 'view.zoomNextFrame' },
+      { id: 'view.previousPage', label: 'Previous Page', command: 'view.previousPage' },
+      { id: 'view.nextPage', label: 'Next Page', command: 'view.nextPage' },
+      { type: 'separator' },
       { id: 'view-split-right', label: 'Split Right' },
       { id: 'view-split-down', label: 'Split Down' },
       { type: 'separator' },
-      { id: 'view-rulers', label: 'Rulers', checkbox: true },
-      { id: 'view-multiplayer-cursors', label: 'Multiplayer Cursors', checkbox: true },
+      {
+        id: 'variables',
+        label: 'Variables…',
+        palette: {
+          icon: 'variables',
+          keywords: ['tokens', 'design tokens', 'css variables', 'collections', 'modes', 'theme']
+        }
+      },
+      { type: 'separator' },
+      { id: 'view-rulers', label: 'Rulers', checkbox: true, shortcut: 'SHIFT+R' },
+      // Figma's View › Pixel grid, shown once zoomed in far enough.
+      { id: 'view-pixel-grid', label: 'Pixel Grid', checkbox: true, shortcut: "SHIFT+'" },
+      {
+        id: 'view-multiplayer-cursors',
+        label: 'Multiplayer Cursors',
+        checkbox: true,
+        shortcut: 'ALT+MOD+\\'
+      },
       { id: 'view-design-issues', label: 'Design Issues', checkbox: true, handler: 'shell' },
+      { id: 'view-comments', label: 'Comments', checkbox: true, shortcut: 'SHIFT+C' },
       { type: 'separator' },
       {
         id: 'theme',
@@ -209,20 +267,14 @@ export const APP_MENU_SCHEMA = [
             id: 'snap-pixel-grid',
             label: 'Snap to Pixel Grid',
             checkbox: true,
-            handler: 'shell'
-          },
-          { type: 'separator' },
-          {
-            id: 'settings',
-            label: 'Settings…',
-            shortcut: 'MOD+,',
-            accelerator: 'CmdOrCtrl+,',
+            shortcut: "MOD+SHIFT+'",
             handler: 'shell'
           }
         ]
       },
       { type: 'separator' },
       { id: 'toggle-ui', label: 'Toggle UI', shortcut: 'MOD+\\' },
+      { id: 'toggle-preview', label: 'Preview', shortcut: 'MOD+ALT+↩' },
       { type: 'separator' },
       { id: 'profiler', label: 'Profiler', checkbox: true, target: 'browser' },
       {
@@ -251,6 +303,12 @@ export const APP_MENU_SCHEMA = [
         id: 'selection.ungroup',
         label: 'Ungroup Selection',
         command: 'selection.ungroup'
+      },
+      { type: 'separator' },
+      {
+        id: 'insert-icon',
+        label: 'Insert Icon…',
+        palette: { keywords: ['iconify', 'symbol', 'glyph', 'lucide'] }
       },
       { type: 'separator' },
       {
@@ -346,6 +404,11 @@ export const APP_MENU_SCHEMA = [
         label: 'Detach Instance',
         command: 'selection.detachInstance'
       },
+      {
+        id: 'selection.detachIcon',
+        label: 'Detach Icon',
+        command: 'selection.detachIcon'
+      },
       { type: 'separator' },
       {
         id: 'selection.moveToPage',
@@ -425,5 +488,6 @@ export const APP_MENU_SCHEMA = [
 export const APP_MENU_APP_ITEMS = [
   { id: 'about', label: 'About OpenPencil' },
   { id: 'check-updates', label: 'Check for Updates…' },
+  SETTINGS_MENU_ITEM,
   { id: 'quit', label: 'Quit OpenPencil', shortcut: 'MOD+Q' }
 ] satisfies AppMenuActionItem[]

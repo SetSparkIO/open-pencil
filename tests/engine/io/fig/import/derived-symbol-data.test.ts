@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { materializeDocument } from '@open-pencil/fig'
 import type { DerivedSymbolOverride } from '@open-pencil/fig/instance-overrides'
 import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
-import { getNodeLocalMatrix } from '@open-pencil/scene-graph'
+import { getNodeLocalMatrix } from '@open-pencil/scene-graph/coordinate'
 
 const guid = (localID: number) => ({ sessionID: 1, localID })
 function derivedChild(
@@ -133,7 +133,7 @@ describe('occurrence derived symbol data', () => {
       [blob]
     )
     expect(child.derivedTextGlyphs).toEqual([
-      { commandsBlob: blob, firstCharacter: 0, x: 4, y: 15, fontSize: 14, rotation: 0 }
+      { commandsBlob: blob, firstCharacter: 0, x: 4, y: 15, fontSize: 14, rotation: 0, advance: 14 }
     ])
   })
 })

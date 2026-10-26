@@ -4,9 +4,20 @@ export {
   ReadOnlyLibraryDefinitionError
 } from './capabilities'
 export type { NodeEditCapability } from './capabilities'
+export { READ_ONLY_TOOLS, ReadOnlyDocumentError } from './read-only'
 export { DEFAULT_SNAPPING_PREFERENCES } from './preferences'
 export type { SnappingPreferences } from './preferences'
 export { createDefaultEditorSharedState } from './state/shared'
+export { editedGradient, editedGradientLayout } from './gradient-edit'
+export type { SelectionSpacing } from './alignment'
+export type { MovePlace } from './undo'
+export type { AttachModifiers } from './connectors/attach'
+export {
+  replaceSelectionColor,
+  selectionColors,
+  selectionColorsShown,
+  type SelectionColor
+} from './selection/colors'
 export {
   copyEditorViewState,
   createDefaultEditorViewState,
@@ -14,20 +25,41 @@ export {
 } from './state/view'
 export { createDefaultEditorState, createEditor } from './create'
 export { executeAtomicTool } from './history/atomic-tool'
-export type { PageSnapshot } from './history/snapshot'
-export { graphFromPageSnapshot } from './history/snapshot-graph'
-export type { ClipboardPayload, ClipboardSnapshot } from './clipboard/copy'
-export { resolvePasteTarget } from './clipboard/paste-target'
+export { isEmptyDocumentChange, type DocumentChange } from './history/document-change'
+export type { PageSnapshot } from './history/snapshot/page'
+export { graphFromDocumentChange, graphFromPageSnapshot } from './history/snapshot/graph'
+export type { ClipboardPayload, ClipboardSnapshot, CopyOptions } from './clipboard/copy'
+export { pastedPropertyChanges } from './clipboard/paste/properties'
+export { resolvePasteTarget } from './clipboard/paste/target'
+export { playIslandRoots } from './play/islands'
+export { resolvePlayState, type InstanceState } from './play/states'
+export type { PlayState } from './play/actions'
+export type { ShaderRasterizer } from './shaders/types'
+export type { ShaderPaintList } from './shaders/actions'
 export type { Editor } from './create'
+export type {
+  PageSwitchProgress,
+  PreparedPage,
+  PreparePageOptions,
+  SwitchPageOptions
+} from './pages'
+export type { ExposableComponentField } from './components/authoring/context'
+export type { VariableTokenFields } from './variables'
 export { reapplyInstanceComponentProperties } from './components/properties'
 export { createGuideActions } from './guides'
 export { createTextActions } from './text'
+export { resizedPathTextGlyphs } from './text/path-edit'
 export { opacityFromBuffer } from './nodes'
+export { layerTypeOptions, type LayerType } from './structure/layer-type'
 export type { NodePreview } from './node-preview'
 export { EDITOR_TOOLS, TOOL_SHORTCUTS } from './tool-registry'
 export type { RenameSelectionOptions, RenameSelectionPreview } from './structure/rename'
 export type { EditorToolDef } from './tool-registry'
-export type { VariantConflict, VariantValidationIssue } from './components/variants'
+export type {
+  VariantConflict,
+  VariantMutationResult,
+  VariantValidationIssue
+} from './components/variants'
 export type {
   ClipboardImageResolution,
   EditorContext,
@@ -38,5 +70,8 @@ export type {
   EditorSharedState,
   EditorViewState,
   FigmaClipboardImageResolver,
+  ResumedPath,
+  ShapeHandleHover,
+  GradientEdit,
   Tool
 } from './types'

@@ -1,15 +1,15 @@
 import * as v from 'valibot'
 
 import type { FigmaComponentNode, FigmaNodeProxy } from '#core/figma-api'
-import { toolNumber } from '#core/tools/input'
-import { defineTool, nodeSummary, requireNodes } from '#core/tools/schema'
+import { OpenPencilAPI } from '#core/openpencil-api'
+import { toolNumber, defineTool, nodeSummary, requireNodes } from '#core/tools/schema'
 
 export const createComponent = defineTool({
   name: 'create_component',
 
   description: 'Convert a frame/group into a component.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     id: v.pipe(v.string(), v.description('Node ID to convert'))
   }),
   execute: (figma, { id }) => {
@@ -25,7 +25,7 @@ export const createInstance = defineTool({
 
   description: 'Create an instance of a component.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     component_id: v.pipe(v.string(), v.description('Component node ID')),
     x: v.optional(toolNumber(v.pipe(v.number(), v.description('X position')))),
     y: v.optional(toolNumber(v.pipe(v.number(), v.description('Y position'))))
@@ -45,9 +45,10 @@ export const combineAsVariants = defineTool({
 
   description:
     'Combine components sharing a parent into a component set (variant set). Components named ' +
-    '"Category/Value" (e.g. "Button/Primary") derive variant properties from the name segments.',
+    'as Figma names variants, "State=On, Size=Large", get those variant properties; names like ' +
+    '"Button/Primary" derive a Variant property from the segments after the first slash.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     ids: v.pipe(v.array(v.string()), v.minLength(1), v.description('Component node IDs to combine'))
   }),
   execute: (figma, { ids }) => {
@@ -75,7 +76,7 @@ export const exposeInstanceSwap = defineTool({
 
   description: 'Expose nested instances as an instance-swap slot on their component.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     instance_ids: v.pipe(v.array(v.string()), v.minLength(1), v.description('Instance node IDs')),
     candidate_ids: v.pipe(
       v.array(v.string()),
@@ -96,7 +97,9 @@ export const exposeInstanceSwap = defineTool({
     if (candidates.length !== candidate_ids.length)
       return { error: 'One or more candidate IDs were not found' }
     try {
-      return nodeSummary(figma.exposeInstanceSwap(slots, candidates, property_name))
+      return nodeSummary(
+        new OpenPencilAPI(figma).exposeInstanceSwap(slots, candidates, property_name)
+      )
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }

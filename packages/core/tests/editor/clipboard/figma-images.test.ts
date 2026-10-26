@@ -1,11 +1,10 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 
-import { initCodec } from '@open-pencil/core'
-import { buildFigmaClipboardHTML } from '@open-pencil/core/clipboard'
-import { createEditor } from '@open-pencil/core/editor'
-import type { ClipboardImageResolution } from '@open-pencil/core/editor'
-
 import { expectDefined } from '#core-tests/helpers/assert'
+
+import { createEditor, type ClipboardImageResolution } from '@open-pencil/core'
+import { buildFigmaClipboardHTML } from '@open-pencil/core/clipboard'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
 
 const IMAGE_HASH_A = '1111111111111111111111111111111111111111'
 const IMAGE_HASH_B = '2222222222222222222222222222222222222222'

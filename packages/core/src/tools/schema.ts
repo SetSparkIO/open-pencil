@@ -39,7 +39,7 @@ interface ToolMetadata {
 }
 
 export interface ToolDef extends ToolMetadata {
-  input: v.ObjectSchema<v.ObjectEntries, undefined>
+  input: v.StrictObjectSchema<v.ObjectEntries, undefined>
   /** Derived from execution metadata, never declared independently by a tool. */
   readonly mutates: boolean
   execute: (figma: FigmaAPI, args: Record<string, unknown>) => unknown
@@ -50,9 +50,9 @@ type ToolDefinitionMetadata = Omit<ToolMetadata, 'exposure' | 'capabilities' | '
 
 export function defineTool<P extends v.ObjectEntries, R>(
   def: ToolDefinitionMetadata & {
-    input: v.ObjectSchema<P, undefined>
+    input: v.StrictObjectSchema<P, undefined>
     execution: ToolExecution & (R extends PromiseLike<unknown> ? { kind: 'async' } : unknown)
-    execute: (figma: FigmaAPI, args: v.InferOutput<v.ObjectSchema<P, undefined>>) => R
+    execute: (figma: FigmaAPI, args: v.InferOutput<v.StrictObjectSchema<P, undefined>>) => R
   }
 ): ToolDef {
   return {
@@ -72,7 +72,8 @@ export function defineTool<P extends v.ObjectEntries, R>(
 /**
  * Every tool run goes through here, so a wrong call from AI chat, the CLI, or WebMCP names the
  * tool and lists each problem with its argument, as `v.summarize` formats them. MCP clients get
- * the MCP SDK's own report, which validates the same schema before the handler runs.
+ * the MCP SDK's own report, which validates the same schema before the handler runs. Inputs are
+ * strict objects, so a misspelled or mis-nested argument fails here instead of being dropped.
  */
 export function parseToolArgs<S extends v.GenericSchema>(
   name: string,
@@ -119,6 +120,11 @@ export function requireNodes(figma: FigmaAPI, ids: ReadonlyArray<string>): Figma
   return nodes
 }
 
+/** A tool's answer when the operation it wraps throws: the error's message for the caller. */
+export function toolFailure(error: unknown): { error: string } {
+  return { error: error instanceof Error ? error.message : String(error) }
+}
+
 export function nodeNotFound(id: string): { error: string } {
   return { error: `Node "${id}" not found` }
 }
@@ -137,4 +143,38 @@ export function nodeToResult(node: FigmaNodeProxy, maxDepth?: number): Record<st
 
 export function nodeSummary(node: FigmaNodeProxy): { id: string; name: string; type: string } {
   return { id: node.id, name: node.name, type: node.type }
+}
+
+export const nodeIdInputSchema = v.pipe(v.string(), v.description('Node ID'))
+export const nodeInputSchema = v.strictObject({ id: nodeIdInputSchema })
+export const nodeComparisonInputSchema = v.strictObject({
+  from: v.pipe(v.string(), v.description('Source node ID')),
+  to: v.pipe(v.string(), v.description('Target node ID'))
+})
+
+export function nodeTraversalInput(depthDescription: string) {
+  return v.strictObject({
+    id: nodeIdInputSchema,
+    depth: v.optional(toolNumber(v.pipe(v.number(), v.description(depthDescription))))
+  })
+}
+export const positionInputs = {
+  x: toolNumber(v.pipe(v.number(), v.description('X position in the parent, or on the page'))),
+  y: toolNumber(v.pipe(v.number(), v.description('Y position in the parent, or on the page')))
+}
+
+/** Reuse a native number schema for both numeric and numeric-string agent inputs. */
+export function toolNumber(schema: v.GenericSchema<number, number> = v.number()) {
+  // JSON Schema numbers are finite. Express that with representable bounds as well as at runtime.
+  const finite = v.pipe(schema, v.minValue(-Number.MAX_VALUE), v.maxValue(Number.MAX_VALUE))
+  return v.union([
+    finite,
+    v.pipe(
+      v.string(),
+      v.regex(/\S/, 'Expected a nonblank numeric string'),
+      v.description(v.getDescription(schema) ?? 'Numeric value'),
+      v.transform(Number),
+      finite
+    )
+  ])
 }

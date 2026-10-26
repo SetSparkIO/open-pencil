@@ -1,13 +1,17 @@
 import { cloneNodeProps } from '../copy'
-import { remapInstanceOverrideState } from '../instance-overrides'
+import { remapInstanceOverrideState } from '../instances/overrides'
+import { remapStyleRunReferences, styleRunReferences } from '../text/references'
 import type { ComponentPropertyType, SceneNode } from '../types'
 import { requireTransferReference as required } from './references'
 import type { VariableTransferReferences } from './variables'
 
 export function semanticTransferReferences(node: SceneNode): string[] {
+  const runs = styleRunReferences(node.styleRuns)
   return [
     ...(node.componentId ? [node.componentId] : []),
     ...Object.values(node.boundVariables),
+    ...runs.variables,
+    ...runs.styles,
     ...[
       node.fillStyleId,
       node.strokeStyleId,
@@ -88,6 +92,20 @@ export function prepareNodeTransfer(
     'gridStyleId'
   ] as const) {
     result[field] = source[field] ? style(source[field]) : null
+  }
+  if (result.styleRuns) {
+    // A link to a layer the transfer leaves behind keeps naming it.
+    result.styleRuns = remapStyleRunReferences(result.styleRuns, {
+      variable,
+      style,
+      node: (id) => refs.nodes.get(id) ?? id
+    })
+  }
+  // A connector keeps the layers it was attached to when they are left behind; the end becomes
+  // free where nothing by that ID exists, as a pasted Figma connector does.
+  for (const field of ['connectorStart', 'connectorEnd'] as const) {
+    const endpoint = result[field]
+    if (endpoint?.nodeId) endpoint.nodeId = refs.nodes.get(endpoint.nodeId) ?? endpoint.nodeId
   }
   for (const paths of [result.fillGeometry, result.strokeGeometry]) {
     for (const path of paths ?? []) if (path.fillStyleId) path.fillStyleId = style(path.fillStyleId)

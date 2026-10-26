@@ -3,15 +3,19 @@ import selectTheme from './select'
 const appSelectTheme = {
   slots: {
     ...selectTheme.slots,
-    trigger: [selectTheme.slots.trigger, 'w-full min-w-0 px-1.5'],
-    value: [selectTheme.slots.value, 'min-w-0 flex-1 truncate text-left'],
-    content: [selectTheme.slots.content, 'max-h-56'],
-    viewport: [selectTheme.slots.viewport, 'p-0.5'],
-    item: [selectTheme.slots.item, 'py-0 pr-2 pl-6 text-[11px]'],
-    indicator: 'absolute left-1.5 inline-flex items-center justify-center'
+    trigger: [selectTheme.slots.trigger, 'w-full min-w-0']
   },
-  variants: selectTheme.variants,
-  defaultVariants: selectTheme.defaultVariants
+  variants: {
+    ...selectTheme.variants,
+    /** The control scale in `theme/control.ts`, with the padding and text of an input that size. */
+    size: {
+      xs: { trigger: 'h-6 px-1.5 text-[11px]' },
+      sm: { trigger: 'h-7 px-2.5 text-xs' },
+      md: { trigger: 'h-8 px-3 text-xs' },
+      lg: { trigger: 'h-9 px-3 text-sm' }
+    }
+  },
+  defaultVariants: { ...selectTheme.defaultVariants, size: 'xs' as const }
 }
 
 export type AppSelectTheme = typeof appSelectTheme

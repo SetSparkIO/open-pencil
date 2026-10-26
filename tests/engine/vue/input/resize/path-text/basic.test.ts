@@ -2,9 +2,14 @@ import { describe, expect, test } from 'bun:test'
 
 import { reactive } from 'vue'
 
-import type { Editor } from '@open-pencil/core/editor'
-import { SceneGraph } from '@open-pencil/scene-graph'
-import type { DerivedTextGlyph, Fill, SceneNode, Stroke } from '@open-pencil/scene-graph'
+import type { Editor } from '@open-pencil/core'
+import {
+  SceneGraph,
+  type DerivedTextGlyph,
+  type Fill,
+  type SceneNode,
+  type Stroke
+} from '@open-pencil/scene-graph'
 import { copyGeometryPaths, copyStrokes } from '@open-pencil/scene-graph/copy'
 import type { ResizeSnapshot } from '@open-pencil/scene-graph/resize'
 
@@ -129,6 +134,7 @@ describe('resize scales path-text stroke geometry and glyphs', () => {
       origStrokes: [],
       origTextPathData: null,
       origTextPathBox: null,
+      lockedAspectRatio: null,
       origChildren: new Map([[text.id, origChild]])
     }
 
@@ -216,6 +222,7 @@ describe('resize scales path-text stroke geometry and glyphs', () => {
       origStrokes: [],
       origTextPathData: null,
       origTextPathBox: null,
+      lockedAspectRatio: null,
       origChildren: new Map([[text.id, origChild]])
     }) as DragResize
 

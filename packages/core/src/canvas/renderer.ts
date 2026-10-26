@@ -1,14 +1,14 @@
+import { isEqual } from 'es-toolkit'
 import { toUint8Array } from 'js-base64'
 
-import { slotPropertyId } from '@open-pencil/scene-graph'
 import type { SceneNode, SceneGraph, Fill, Stroke } from '@open-pencil/scene-graph'
 import type { RenderColorSpace, ResolvedRenderColor } from '@open-pencil/scene-graph/color'
 import type { Color, Rect, Vector } from '@open-pencil/scene-graph/primitives'
-import type { SnapGuide } from '@open-pencil/scene-graph/snap'
+import { slotPropertyId } from '@open-pencil/scene-graph/slots'
 
 /* eslint-disable max-lines -- SkiaRenderer facade owns CanvasKit state and delegates domain drawing */
 import {
-  SELECTION_COLOR,
+  DEFAULT_SELECTION_THEME,
   COMPONENT_COLOR,
   SLOT_COLOR,
   CANVAS_BG_COLOR,
@@ -20,28 +20,36 @@ import {
 } from '#core/constants'
 import type { EditorState } from '#core/editor/types'
 import { RenderProfiler } from '#core/profiler'
-import type { TextEditor } from '#core/text/editor'
 import type { FontResolutionSnapshot } from '#core/text/resolver'
 
+import { createImageCache } from './images/cache'
+import { ImagePreviewCache } from './images/previews'
 import { LabelCache } from './labels/cache'
 import * as LabelHitTest from './labels/hit-test'
 import { LabelParagraphCache } from './labels/paragraph-cache'
 import { labelHitOptions } from './labels/style'
+import { NodePathCaches } from './paths/cache'
 import * as RenderColors from './renderer/colors'
 import * as RendererFonts from './renderer/fonts'
-import { destroyRenderer } from './renderer/lifecycle'
-import { installRendererDomainMethods } from './renderer/methods'
-import { initializeRendererPaints } from './renderer/paints'
+import { destroyRenderer, releaseLiveImages } from './renderer/lifecycle'
+import { installRendererDomainMethods, type RendererDomainMethods } from './renderer/methods'
+import { initializeRendererPaints, initializeSelectionPaintColors } from './renderer/paints'
 import * as RenderPipeline from './renderer/pipeline'
 import type { SceneBacking, SceneBackingBuild } from './renderer/retained-backing/types'
 import * as RendererState from './renderer/state'
 import * as RenderText from './text'
-import { createGlyphSilhouetteCache } from './text/derived'
-import { TextPreparationCache } from './text/preparation-cache'
-export type { MeasurementMode, PresenceCursor, RenderOverlays, RulerTheme } from './renderer/types'
+import type { SavedDecorationCache } from './text/decorations'
+import { createDerivedGlyphPathCache, createGlyphSilhouetteCache } from './text/derived'
+import { createEmojiImageCache } from './text/emoji'
+import { TextPreparationCache } from './text/preparation/cache'
+export type {
+  MeasurementMode,
+  PresenceCursor,
+  RenderOverlays,
+  RulerTheme,
+  SelectionTheme
+} from './renderer/types'
 import type {
-  Image as CKImage,
-  Path,
   CanvasKit,
   Surface,
   Canvas,
@@ -53,7 +61,8 @@ import type {
   ImageFilter,
   MaskFilter,
   RuntimeEffect,
-  Paragraph
+  Image,
+  TextureSource
 } from 'canvaskit-wasm'
 
 export interface SubtreePictureCacheEntry {
@@ -70,16 +79,29 @@ export interface PendingFontNode {
 }
 
 import type { PlacedIssueMarker } from './issues/types'
+import type { PlacedStatusLabel } from './labels/status'
 import { EffectRasterCache } from './renderer/effect-raster-cache'
 import { TiledSceneController } from './renderer/tiles'
 import type { TransientCanvasPreview } from './renderer/transient-previews'
-import type { PresenceCursor, RenderOverlays, RulerTheme } from './renderer/types'
+import type { RenderOverlays, RulerTheme, SelectionTheme } from './renderer/types'
+
+/**
+ * A picture uploaded as a texture that knows its size: an `ImageBitmap`, or a canvas, which
+ * WebGL uploads as it does an image though CanvasKit's types leave it out. A canvas is uploaded
+ * as it is when this is called, so a WebGPU canvas is passed in the task that drew it.
+ */
+export type LiveImageSource =
+  | Extract<TextureSource, { width: number; height: number }>
+  | HTMLCanvasElement
+
+const textureSource = (source: LiveImageSource) => source as TextureSource
 
 export class SkiaRenderer {
   ck: CanvasKit
   surface: Surface
   declare fillPaint: Paint
   diamondGradientEffect: RuntimeEffect | null = null
+  pixelGridEffect: RuntimeEffect | null = null
   declare strokePaint: Paint
   declare selectionPaint: Paint
   declare parentOutlinePaint: Paint
@@ -95,6 +117,8 @@ export class SkiaRenderer {
   textFont: Font | null = null
   labelFont: Font | null = null
   sizeFont: Font | null = null
+  /** Inter SemiBold at 11 px, which Figma sets the padding and gap values on the canvas in. */
+  valueFont: Font | null = null
   sectionTitleFont: Font | null = null
   componentLabelFont: Font | null = null
   fontMgr: FontMgr | null = null
@@ -107,14 +131,24 @@ export class SkiaRenderer {
   pendingFontNodes = new Map<string, PendingFontNode>()
   textPictureGenerations = new Map<string, { data: Uint8Array; generation: number }>()
   readonly transientPreviews = new Map<string, TransientCanvasPreview>()
-  imageCache = new Map<string, CKImage>()
-  vectorPathCache = new Map<string, Path[]>()
-  vectorStrokePathCache = new Map<string, Path[]>()
-  vectorStrokeOutlineCache = new Map<string, Path[]>()
-  fillGeometryCache = new Map<string, Path[]>()
-  strokeGeometryCache = new Map<string, Path[]>()
+  imageCache = createImageCache()
+  /**
+   * Images drawn in place of stored ones while they play, such as a shader's live frames, each
+   * with the surface whose GL context holds its texture.
+   */
+  readonly liveImages = new Map<string, { image: Image; surface: Surface }>()
+  viewportImageRendering = false
+  imageMemoryGraph: SceneGraph | null = null
+  imageMemoryPage: string | null = null
+  onImagePreviewReady: (() => void) | null = null
+  readonly imagePreviews = new ImagePreviewCache(() => this.onImagePreviewReady?.())
+  nodePaths = new NodePathCaches()
   /** Path-text glyph silhouettes (stroke-and-union, font units) keyed by blob hash + relative weight. */
   glyphSilhouetteCache = createGlyphSilhouetteCache()
+  derivedGlyphPathCache = createDerivedGlyphPathCache()
+  derivedDecorationCache: SavedDecorationCache = new WeakMap()
+  /** Images of the emoji saved text draws, by what drew them and the emoji. */
+  emojiImageCache = createEmojiImageCache()
   renderingSceneBacking = false
   scenePicture: SkPicture | null = null
   scenePictureVersion = -1
@@ -131,7 +165,16 @@ export class SkiaRenderer {
   sceneBackingLastViewportEventAt = 0
   navigationPhase: EditorState['navigation']['phase'] = 'idle'
   navigationGeneration = 0
+  /** The document is read-only: selections draw without handles to drag. */
+  readOnly = false
   tiledSceneEnabled = false
+  /**
+   * What an empty sticky note shows while it is edited on this canvas, in the interface language;
+   * null for a canvas that draws only the document, such as an export.
+   */
+  stickyPlaceholder: string | null = null
+  /** What an empty connector label shows while it is typed into; null draws nothing. */
+  connectorLabelPlaceholder: string | null = null
   tracksSceneSettlement = true
   /** Colour space this renderer's surface presents; colours convert into it when painting. */
   presentationColorSpace: RenderColorSpace = 'srgb'
@@ -140,7 +183,6 @@ export class SkiaRenderer {
   lastSceneViewport: { panX: number; panY: number; zoom: number } | null = null
   nodePictureCache = new Map<string, SkPicture | null>()
   nodePictureCacheGenerations = new Map<string, number>()
-  nodePictureCacheDependencies = new Map<string, readonly string[]>()
   effectRasterCache = new EffectRasterCache()
   subtreePictureCache = new Map<string, SubtreePictureCacheEntry>()
   subtreePictureCachePageId: string | null = null
@@ -163,6 +205,8 @@ export class SkiaRenderer {
   declare rulerLabelPaint: Paint
   declare penPathPaint: Paint
   declare penLiveStrokePaint: Paint
+  /** The pencil stroke being drawn; its colour and width are set per frame. */
+  declare pencilStrokePaint: Paint
   declare penHandlePaint: Paint
   declare penVertexFill: Paint
   declare penVertexStroke: Paint
@@ -176,9 +220,13 @@ export class SkiaRenderer {
   showRulers = true
   pageColor = CANVAS_BG_COLOR
   rulerTheme: RulerTheme | null = null
+  /** Selection chrome, set from editor state each frame through {@link setSelectionTheme}. */
+  selectionTheme: SelectionTheme = DEFAULT_SELECTION_THEME
   pageId: string | null = null
   /** Issue markers placed in the last overlay pass; hit testing reads the same layout. */
   issueMarkers: PlacedIssueMarker[] = []
+  /** Status labels drawn in the last label pass; clicks on them open the status menu. */
+  statusLabels: PlacedStatusLabel[] = []
   /** Screen rectangles of UI floating over this canvas, which overlays such as edge pins avoid. */
   overlayObstacles: readonly Rect[] = []
 
@@ -196,199 +244,63 @@ export class SkiaRenderer {
   readonly COMPONENT_SET_DASH = COMPONENT_SET_DASH
   readonly COMPONENT_SET_DASH_GAP = COMPONENT_SET_DASH_GAP
 
-  declare drawHoverHighlight: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    hoveredNodeId?: string | null,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare drawMeasurements: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    selectedIds: Set<string>,
-    targetId?: string | null
-  ) => void
-  declare drawEnteredContainer: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    enteredContainerId?: string | null,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare drawSelection: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    selectedIds: Set<string>,
-    overlays: RenderOverlays
-  ) => void
-  declare drawNodeSelection: (
-    canvas: Canvas,
-    node: SceneNode,
-    rotation: number,
-    graph: SceneGraph,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare drawSelectionLabels: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    selectedIds: Set<string>,
-    overlays?: RenderOverlays
-  ) => void
-  declare drawParentFrameOutlines: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    selectedIds: Set<string>,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare drawNodeOutline: (
-    canvas: Canvas,
-    node: SceneNode,
-    rotation: number,
-    graph: SceneGraph,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare drawGroupBounds: (
-    canvas: Canvas,
-    nodes: SceneNode[],
-    graph: SceneGraph,
-    preview?: RenderOverlays['rotationPreview']
-  ) => void
-  declare getRotatedCorners: (node: SceneNode, abs: Vector) => Vector[]
-  declare drawHandle: (canvas: Canvas, x: number, y: number) => void
-  declare drawSnapGuides: (canvas: Canvas, guides?: SnapGuide[]) => void
-  declare drawMarquee: (canvas: Canvas, marquee?: Rect | null) => void
-  declare drawFlashes: (canvas: Canvas, graph: SceneGraph) => void
-  declare drawLayoutInsertIndicator: (
-    canvas: Canvas,
-    indicator?: RenderOverlays['layoutInsertIndicator']
-  ) => void
-  declare drawAutoLayoutHover: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    hover?: RenderOverlays['autoLayoutHover']
-  ) => void
-  declare drawTextEditOverlay: (canvas: Canvas, node: SceneNode, editor: TextEditor) => void
-  declare drawNodeEditOverlay: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    editState?: RenderOverlays['nodeEditState']
-  ) => void
-  declare drawPenOverlay: (canvas: Canvas, penState: RenderOverlays['penState']) => void
-  declare drawPresenceCursors: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    cursors?: PresenceCursor[]
-  ) => void
-  declare drawRulers: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    selectedIds: Set<string>,
-    guides?: RenderOverlays['guides']
-  ) => void
-  declare drawSectionTitles: (canvas: Canvas, graph: SceneGraph, overlays?: RenderOverlays) => void
-  declare drawComponentLabels: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    overlays?: RenderOverlays
-  ) => void
-  declare renderNodeSelf: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    nodeId: string,
-    overlays?: RenderOverlays
-  ) => void
-  declare renderNode: (
-    canvas: Canvas,
-    graph: SceneGraph,
-    nodeId: string,
-    overlays: RenderOverlays,
-    parentAbsX?: number,
-    parentAbsY?: number,
-    hasTransformedAncestor?: boolean
-  ) => void
-  declare renderSection: (canvas: Canvas, node: SceneNode, graph: SceneGraph) => void
-  declare renderComponentSet: (canvas: Canvas, node: SceneNode, graph: SceneGraph) => void
-  declare renderShape: (canvas: Canvas, node: SceneNode, graph: SceneGraph) => void
-  declare renderShapeUncached: (canvas: Canvas, node: SceneNode, graph: SceneGraph) => void
-  declare renderEffects: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean,
-    pass: 'behind' | 'front',
-    shadowShapeChild?: SceneNode | null
-  ) => void
-  declare renderText: (canvas: Canvas, node: SceneNode, fill?: Fill) => void
-  declare drawNodeFill: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean,
-    fill?: Fill
-  ) => void
-  declare applyFill: (fill: Fill, node: SceneNode, graph: SceneGraph, fillIndex?: number) => boolean
-  declare applyGradientFill: (fill: Fill, node: SceneNode, graph: SceneGraph) => void
-  declare applyImageFill: (fill: Fill, node: SceneNode, graph: SceneGraph) => boolean
-  declare drawArc: (canvas: Canvas, node: SceneNode, paint: Paint) => void
-  declare drawNodeStroke: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean
-  ) => void
-  declare drawStrokeWithAlign: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean,
-    align: 'INSIDE' | 'CENTER' | 'OUTSIDE'
-  ) => void
-  declare drawRRectStrokeWithAlign: (
-    canvas: Canvas,
-    rrect: Float32Array,
-    node: SceneNode,
-    stroke: Stroke
-  ) => void
-  declare drawIndividualSideStrokes: (
-    canvas: Canvas,
-    node: SceneNode,
-    align: 'INSIDE' | 'CENTER' | 'OUTSIDE'
-  ) => void
-  declare strokeNodeShape: (canvas: Canvas, node: SceneNode, paint: Paint) => void
-  declare makeNodeShapePath: (node: SceneNode, rect: Float32Array, hasRadius: boolean) => Path
-  declare makePolygonPath: (node: SceneNode) => Path
-  declare makeRRect: (node: SceneNode) => Float32Array
-  declare makeRRectWithSpread: (node: SceneNode, spread: number) => Float32Array
-  declare makeRRectWithOffset: (
-    node: SceneNode,
-    ox: number,
-    oy: number,
-    spread: number
-  ) => Float32Array
-  declare clipNodeShape: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean
-  ) => void
-  declare getVectorPaths: (node: SceneNode) => Path[] | null
-  declare getFillGeometry: (node: SceneNode) => Path[] | null
-  declare getStrokeGeometry: (node: SceneNode) => Path[] | null
-  declare getCachedDropShadow: (
-    dx: number,
-    dy: number,
-    sigma: number,
-    color: Float32Array
-  ) => ImageFilter
-  declare getCachedBlur: (sigma: number) => ImageFilter
-  declare getCachedDecalBlur: (sigma: number) => ImageFilter
-  declare getCachedMaskBlur: (sigma: number) => MaskFilter
-  declare applyClippedBlur: (
-    canvas: Canvas,
-    node: SceneNode,
-    rect: Float32Array,
-    hasRadius: boolean,
-    sigma: number
-  ) => void
+  declare drawHoverHighlight: RendererDomainMethods['drawHoverHighlight']
+  declare drawMeasurements: RendererDomainMethods['drawMeasurements']
+  declare drawEnteredContainer: RendererDomainMethods['drawEnteredContainer']
+  declare drawSelection: RendererDomainMethods['drawSelection']
+  declare drawNodeSelection: RendererDomainMethods['drawNodeSelection']
+  declare drawSelectionLabels: RendererDomainMethods['drawSelectionLabels']
+  declare drawParentFrameOutlines: RendererDomainMethods['drawParentFrameOutlines']
+  declare drawNodeOutline: RendererDomainMethods['drawNodeOutline']
+  declare drawGroupBounds: RendererDomainMethods['drawGroupBounds']
+  declare getRotatedCorners: RendererDomainMethods['getRotatedCorners']
+  declare drawHandle: RendererDomainMethods['drawHandle']
+  declare drawSnapGuides: RendererDomainMethods['drawSnapGuides']
+  declare drawSnapMarks: RendererDomainMethods['drawSnapMarks']
+  declare drawMarquee: RendererDomainMethods['drawMarquee']
+  declare drawFlashes: RendererDomainMethods['drawFlashes']
+  declare drawLayoutInsertIndicator: RendererDomainMethods['drawLayoutInsertIndicator']
+  declare drawAutoLayoutHover: RendererDomainMethods['drawAutoLayoutHover']
+  declare drawTextEditOverlay: RendererDomainMethods['drawTextEditOverlay']
+  declare drawNodeEditOverlay: RendererDomainMethods['drawNodeEditOverlay']
+  declare drawPenOverlay: RendererDomainMethods['drawPenOverlay']
+  declare drawPencilOverlay: RendererDomainMethods['drawPencilOverlay']
+  declare drawPresenceCursors: RendererDomainMethods['drawPresenceCursors']
+  declare drawRulers: RendererDomainMethods['drawRulers']
+  declare drawFrameTitles: RendererDomainMethods['drawFrameTitles']
+  declare drawSectionTitles: RendererDomainMethods['drawSectionTitles']
+  declare drawComponentLabels: RendererDomainMethods['drawComponentLabels']
+  declare renderNodeSelf: RendererDomainMethods['renderNodeSelf']
+  declare renderNode: RendererDomainMethods['renderNode']
+  declare renderSection: RendererDomainMethods['renderSection']
+  declare renderComponentSet: RendererDomainMethods['renderComponentSet']
+  declare renderShape: RendererDomainMethods['renderShape']
+  declare renderShapeUncached: RendererDomainMethods['renderShapeUncached']
+  declare paintShapeContent: RendererDomainMethods['paintShapeContent']
+  declare renderEffects: RendererDomainMethods['renderEffects']
+  declare renderText: RendererDomainMethods['renderText']
+  declare drawNodeFill: RendererDomainMethods['drawNodeFill']
+  declare applyFill: RendererDomainMethods['applyFill']
+  declare applyGradientFill: RendererDomainMethods['applyGradientFill']
+  declare applyImageFill: RendererDomainMethods['applyImageFill']
+  declare drawNodeStroke: RendererDomainMethods['drawNodeStroke']
+  declare drawStrokeWithAlign: RendererDomainMethods['drawStrokeWithAlign']
+  declare drawRRectStrokeWithAlign: RendererDomainMethods['drawRRectStrokeWithAlign']
+  declare drawIndividualSideStrokes: RendererDomainMethods['drawIndividualSideStrokes']
+  declare strokeNodeShape: RendererDomainMethods['strokeNodeShape']
+  declare makeNodeShapePath: RendererDomainMethods['makeNodeShapePath']
+  declare makePolygonPath: RendererDomainMethods['makePolygonPath']
+  declare makeRRect: RendererDomainMethods['makeRRect']
+  declare makeRRectWithSpread: RendererDomainMethods['makeRRectWithSpread']
+  declare clipNodeShape: RendererDomainMethods['clipNodeShape']
+  declare getVectorPaths: RendererDomainMethods['getVectorPaths']
+  declare getFillGeometry: RendererDomainMethods['getFillGeometry']
+  declare getStrokeGeometry: RendererDomainMethods['getStrokeGeometry']
+  declare getCachedDropShadow: RendererDomainMethods['getCachedDropShadow']
+  declare getCachedBlur: RendererDomainMethods['getCachedBlur']
+  declare getCachedDecalBlur: RendererDomainMethods['getCachedDecalBlur']
+  declare getCachedMaskBlur: RendererDomainMethods['getCachedMaskBlur']
+  declare applyClippedBlur: RendererDomainMethods['applyClippedBlur']
   color4f(r: number, g: number, b: number, a: number): Float32Array {
     const c = this._tmpColor
     c[0] = r
@@ -408,7 +320,20 @@ export class SkiaRenderer {
   }
 
   selColor(alpha = 1) {
-    return this.ck.Color4f(SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, alpha)
+    const { r, g, b } = this.selectionTheme.color
+    return this.ck.Color4f(r, g, b, alpha)
+  }
+
+  selForegroundColor() {
+    const { r, g, b } = this.selectionTheme.foreground
+    return this.ck.Color4f(r, g, b, 1)
+  }
+
+  /** Switches selection chrome to `theme`, repainting the paints that keep it between frames. */
+  setSelectionTheme(theme: SelectionTheme = DEFAULT_SELECTION_THEME): void {
+    if (isEqual(theme, this.selectionTheme)) return
+    this.selectionTheme = { color: { ...theme.color }, foreground: { ...theme.foreground } }
+    initializeSelectionPaintColors(this)
   }
 
   compColor(alpha = 1) {
@@ -419,10 +344,28 @@ export class SkiaRenderer {
     return this.ck.Color4f(SLOT_COLOR.r, SLOT_COLOR.g, SLOT_COLOR.b, alpha)
   }
 
-  /** The outline colour for a node: pink for slots, purple for components, blue otherwise. */
-  outlineColor(node: SceneNode) {
+  /**
+   * The outline colour for a node: pink for slots, purple for components, instances and every
+   * layer inside them, as in Figma, blue otherwise.
+   */
+  outlineColor(node: SceneNode, graph: SceneGraph) {
     if (slotPropertyId(node)) return this.slotColor()
-    return this.isComponentType(node.type) ? this.compColor() : this.selColor()
+    return this.isInComponent(node, graph) ? this.compColor() : this.selColor()
+  }
+
+  /** Text drawn on {@link outlineColor}: white on slot and component colors, else the selection foreground. */
+  outlineForegroundColor(node: SceneNode, graph: SceneGraph) {
+    if (slotPropertyId(node) || this.isInComponent(node, graph)) return this.ck.WHITE
+    return this.selForegroundColor()
+  }
+
+  /** A component, instance or set, or a layer inside one; content placed in a slot is not. */
+  isInComponent(node: SceneNode, graph: SceneGraph): boolean {
+    const owner = graph.closest(
+      node.id,
+      (layer) => this.isComponentType(layer.type) || slotPropertyId(layer) !== undefined
+    )
+    return owner !== undefined && !slotPropertyId(owner)
   }
 
   isComponentType(type: string): boolean {
@@ -491,6 +434,8 @@ export class SkiaRenderer {
 
   replaceSurface(surface: Surface): void {
     this.tiledScene.destroy()
+    // Live textures belong to the old surface's context, so they go before it does.
+    releaseLiveImages(this)
     this.surface.delete()
     this.surface = surface
     this.sceneBackingAllocationFailed = false
@@ -505,8 +450,51 @@ export class SkiaRenderer {
     RendererState.invalidateAllPictures(this)
   }
 
-  invalidateNodePicture(nodeId: string): void {
-    RendererState.invalidateNodePicture(this, nodeId)
+  /**
+   * Draws `source` wherever the image `hash` is painted, until it is set to null, and redraws
+   * `nodeIds`, the layers that paint it. Frames of the same size reuse one texture. Returns
+   * whether a live image is shown, which a browser that cannot upload `source` leaves false.
+   */
+  setLiveImage(
+    hash: string,
+    source: LiveImageSource | null,
+    nodeIds: Iterable<string> = []
+  ): boolean {
+    const live = this.liveImages.get(hash)
+    // A texture made on a surface since replaced has no context left to update or free it in.
+    const current = live?.surface === this.surface ? live.image : null
+    if (
+      source &&
+      current &&
+      current.width() === source.width &&
+      current.height() === source.height
+    ) {
+      this.surface.updateTextureFromSource(current, textureSource(source))
+    } else {
+      current?.delete()
+      this.liveImages.delete(hash)
+      const image = source && this.surface.makeImageFromTextureSource(textureSource(source))
+      if (image) this.liveImages.set(hash, { image, surface: this.surface })
+    }
+    for (const id of nodeIds) this.invalidateNodePicture(id)
+    return this.liveImages.has(hash)
+  }
+
+  /**
+   * Forgets the decoded image `hash` after its bytes were replaced, such as a shader's frame
+   * rendered again, and redraws whatever showed it. Previews notice new bytes themselves.
+   */
+  forgetImage(hash: string): void {
+    const keys = Array.from(this.imageCache.entries(), ([key]) => key)
+    for (const key of keys) {
+      if (key === hash || key.startsWith(`${hash}:`)) this.imageCache.delete(key)
+    }
+    this.invalidateAllPictures()
+  }
+
+  /** Drops `nodeId`'s cached drawing; `changedKeys`, when known, lets text keep its glyph coverage. */
+  invalidateNodePicture(nodeId: string, changedKeys?: readonly (keyof SceneNode)[]): void {
+    RendererState.invalidateNodePicture(this, nodeId, changedKeys)
   }
 
   flashNode(nodeId: string): void {
@@ -577,7 +565,6 @@ export class SkiaRenderer {
     graph: SceneGraph,
     canvasX: number,
     canvasY: number,
-    selectedIds: Set<string>,
     preview?: RenderOverlays['rotationPreview']
   ): SceneNode | null {
     return LabelHitTest.hitTestFrameTitle(
@@ -585,8 +572,9 @@ export class SkiaRenderer {
       canvasX,
       canvasY,
       this.zoom,
-      selectedIds,
+      this.pageId ?? graph.rootId,
       this.labelFont,
+      this.labelCache,
       labelHitOptions(this, graph, preview)
     )
   }
@@ -631,24 +619,7 @@ export class SkiaRenderer {
   }
 
   invalidateVectorPath(nodeId: string): void {
-    for (const cache of [this.vectorPathCache, this.vectorStrokePathCache]) {
-      const old = cache.get(nodeId)
-      if (!old) continue
-      for (const p of old) p.delete()
-      cache.delete(nodeId)
-    }
-    for (const [key, paths] of this.vectorStrokeOutlineCache) {
-      if (!key.startsWith(`${nodeId}|`)) continue
-      for (const p of paths) p.delete()
-      this.vectorStrokeOutlineCache.delete(key)
-    }
-    for (const cache of [this.fillGeometryCache, this.strokeGeometryCache]) {
-      const oldGeom = cache.get(nodeId)
-      if (oldGeom) {
-        for (const p of oldGeom) p.delete()
-        cache.delete(nodeId)
-      }
-    }
+    this.nodePaths.invalidate(nodeId)
   }
 
   measureTextNode(node: SceneNode, maxWidth?: number): { width: number; height: number } | null {
@@ -671,7 +642,7 @@ export class SkiaRenderer {
     node: SceneNode,
     color?: Float32Array,
     opts?: RenderText.ParagraphBuildOptions
-  ): Paragraph {
+  ): RenderText.TextLayout {
     return RenderText.buildParagraph(this, node, color, opts)
   }
 

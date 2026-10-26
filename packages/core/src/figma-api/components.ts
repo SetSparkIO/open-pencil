@@ -11,13 +11,19 @@ import {
   applyComponentPropertyValue,
   componentPropertyDefinitions as sharedComponentPropertyDefinitions,
   removeComponentProperty,
-  createComponentPropertyId
-} from '@open-pencil/scene-graph'
-import { computeAbsoluteBounds } from '@open-pencil/scene-graph/geometry'
-import { deriveSlashVariantProperties } from '@open-pencil/scene-graph/variant-properties'
+  createComponentPropertyId,
+  exposedInstances,
+  instanceExposureIssue,
+  resolveComponentPropertyValue
+} from '@open-pencil/scene-graph/components'
+import { cloneNodeProps } from '@open-pencil/scene-graph/copy'
+
+import { becomesComponent, componentWrapProps } from '#core/editor/components/create'
+import { measurePropertyText } from '#core/editor/components/properties'
+import { wrapNodes } from '#core/editor/structure/container-wrap'
 
 import type { NodeProxyInternals, ProxyThis } from './accessor-utils'
-import { graph, raw, updateNode } from './accessor-utils'
+import { assertProxyEditable, graph, raw, updateNode } from './accessor-utils'
 import type { FigmaNodeProxy } from './proxy'
 import {
   assertSlotSettings,
@@ -25,10 +31,11 @@ import {
   mergeSlotSettings,
   type FigmaSlotSettings
 } from './slots'
+import { addVariantAxis, editVariantAxis, switchVariant, variantPropertiesOf } from './variants'
+
+export { combineComponentsAsVariants } from './variants'
 
 type InstanceSwapPreferredValue = { type: 'COMPONENT' | 'COMPONENT_SET'; key: string }
-
-const COMPONENT_SET_PADDING = 40
 
 interface FigmaComponentPropertyDefinition {
   type: ComponentPropertyType
@@ -118,19 +125,6 @@ function findPropertyHost(graph: SceneGraph, nodeId: string | null): SceneNode |
   return fallback
 }
 
-function requireDistinctComponents(graph: SceneGraph, nodeIds: ReadonlyArray<string>): SceneNode[] {
-  if (nodeIds.length === 0) throw new Error('Need at least 1 component to combine as variants')
-  if (new Set(nodeIds).size !== nodeIds.length) {
-    throw new Error('combineAsVariants requires distinct COMPONENT nodes')
-  }
-
-  const nodes = nodeIds.map((id) => graph.getNode(id))
-  if (!nodes.every((node): node is SceneNode => node?.type === 'COMPONENT')) {
-    throw new Error('combineAsVariants requires COMPONENT nodes')
-  }
-  return nodes
-}
-
 function propertyName(definition: ComponentPropertyDefinition): string {
   return definition.type === 'VARIANT' ? definition.name : `${definition.name}#${definition.id}`
 }
@@ -194,9 +188,16 @@ function componentProperties(
 ): FigmaComponentProperties {
   const node = raw(target, internals)
   if (node.type !== 'INSTANCE') return {}
+  // A variant value is the instance's own variant, as Figma reports it, not an assignment.
+  const variant = variantPropertiesOf(graph(target, internals), node)
   return Object.fromEntries(
     sharedComponentPropertyDefinitions(graph(target, internals), node).map((definition) => {
-      const value = node.componentPropertyAssignments[definition.id] ?? definition.defaultValue
+      const own =
+        definition.type === 'VARIANT' && variant && Object.hasOwn(variant, definition.name)
+          ? variant[definition.name]
+          : undefined
+      const assigned = node.componentPropertyAssignments[definition.id] ?? definition.defaultValue
+      const value = own ?? assigned
       return [
         propertyName(definition),
         {
@@ -244,7 +245,13 @@ function editPropertyDefinitions(
   if (node.type !== 'COMPONENT' && node.type !== 'COMPONENT_SET')
     throw new Error('editComponentProperty() can only be called on components')
   const definition = findDefinition(target, internals, propertyNameValue)
+  if (!definition && node.type === 'COMPONENT_SET')
+    throw new Error('in editComponentProperty: Invalid variant property name')
   if (!definition) throw new Error(`Unknown component property: ${propertyNameValue}`)
+  if (definition.type === 'VARIANT') {
+    assertProxyEditable(target, internals)
+    return editVariantAxis(graph(target, internals), node, definition, changes)
+  }
   if (
     changes.defaultValue !== undefined &&
     !['BOOLEAN', 'TEXT', 'INSTANCE_SWAP'].includes(definition.type)
@@ -314,16 +321,10 @@ function applyProperty(
   definition: ComponentPropertyDefinition,
   value: string | boolean
 ): void {
-  if (definition.type === 'VARIANT') {
-    throw new Error('setProperties() cannot set VARIANT properties through the adapter')
-  }
-  const result = applyComponentPropertyValue(
-    graph(target, internals),
-    node.id,
-    definition,
-    String(value)
-  )
+  const scene = graph(target, internals)
+  const result = applyComponentPropertyValue(scene, node.id, definition, String(value))
   if (!result) throw new Error(`Unable to apply component property: ${propertyName(definition)}`)
+  measurePropertyText({ graph: scene }, node.id, definition)
 }
 export function installComponentPropertyAccessors(
   prototype: object,
@@ -377,47 +378,44 @@ export function installComponentPropertyAccessors(
         return componentProperties(this, internals)
       }
     },
+    variantProperties: {
+      get(this: ProxyThis) {
+        return variantPropertiesOf(graph(this, internals), raw(this, internals))
+      }
+    },
     isExposedInstance: {
       get(this: ProxyThis) {
         const node = raw(this, internals)
-        return (
-          node.type === 'INSTANCE' &&
-          node.componentPropertyReferences.some((reference) => reference.field === 'INSTANCE_SWAP')
-        )
+        if (node.type !== 'INSTANCE') return false
+        if (node.isExposedInstance) return true
+        // A copy inside an instance reports what its source in the component says.
+        const owner = node.parentId
+          ? graph(this, internals).closest(node.parentId, (item) => item.type === 'INSTANCE')
+          : undefined
+        return !!owner && exposedInstances(graph(this, internals), owner).includes(node)
       },
       set(this: ProxyThis, value: boolean) {
         const node = raw(this, internals)
         if (node.type !== 'INSTANCE')
           throw new Error('isExposedInstance is only supported on instances')
-        if (!value)
-          updateNode(this, internals, {
-            componentPropertyReferences: node.componentPropertyReferences.filter(
-              (reference) => reference.field !== 'INSTANCE_SWAP'
-            )
-          })
+        const issue = instanceExposureIssue(graph(this, internals), node)
+        if (issue === 'not-in-component')
+          throw new Error(
+            'Instance must be contained within a component or component set to be exposed.'
+          )
+        if (issue === 'not-primary') throw new Error('Can only expose primary instances.')
+        if (value && issue)
+          throw new Error(
+            'Can only expose instances that have exposed nested instances or children with component property references.'
+          )
+        updateNode(this, internals, { isExposedInstance: value })
       }
     },
     exposedInstances: {
       get(this: ProxyThis) {
         const node = raw(this, internals)
-        if (node.type !== 'INSTANCE') return []
-        const result: FigmaNodeProxy[] = []
-        const visit = (id: string): void => {
-          const child = graph(this, internals).getNode(id)
-          if (!child) return
-          if (
-            child.type === 'INSTANCE' &&
-            child.componentPropertyReferences.some(
-              (reference) => reference.field === 'INSTANCE_SWAP'
-            )
-          )
-            result.push(
-              (this[internals.api] as { wrapNode(id: string): FigmaNodeProxy }).wrapNode(child.id)
-            )
-          child.childIds.forEach(visit)
-        }
-        node.childIds.forEach(visit)
-        return result
+        const api = this[internals.api] as { wrapNode(id: string): FigmaNodeProxy }
+        return exposedInstances(graph(this, internals), node).map((item) => api.wrapNode(item.id))
       }
     },
     setProperties: {
@@ -425,10 +423,29 @@ export function installComponentPropertyAccessors(
         const node = raw(this, internals)
         if (node.type !== 'INSTANCE')
           throw new Error('setProperties() can only be called on instances')
-        for (const [name, value] of Object.entries(properties)) {
+        // Figma checks every name and the variant they make before changing anything.
+        const values = Object.entries(properties).map(([name, value]) => {
           const definition = findDefinition(this, internals, name)
-          if (!definition) throw new Error(`Unknown component property: ${name}`)
-          applyProperty(this, internals, node, definition, value)
+          if (!definition)
+            throw new Error(
+              `in setProperties: Could not find a component property with name: '${name}'`
+            )
+          return { definition, value }
+        })
+        const scene = graph(this, internals)
+        const unresolved = values.find(
+          ({ definition, value }) =>
+            definition.type === 'INSTANCE_SWAP' &&
+            !resolveComponentPropertyValue(scene, String(value))
+        )
+        if (unresolved)
+          throw new Error(
+            `Unable to apply component property: ${propertyName(unresolved.definition)}`
+          )
+        const variant = values.filter(({ definition }) => definition.type === 'VARIANT')
+        if (variant.length > 0) switchVariant(scene, node, variant)
+        for (const { definition, value } of values) {
+          if (definition.type !== 'VARIANT') applyProperty(this, internals, node, definition, value)
         }
       }
     },
@@ -445,6 +462,11 @@ export function installComponentPropertyAccessors(
         }
       ) {
         const node = raw(this, internals)
+        if (type === 'VARIANT') {
+          assertProxyEditable(this, internals)
+          return addVariantAxis(graph(this, internals), node, name.trim(), String(defaultValue))
+            .name
+        }
         if (node.type !== 'COMPONENT' && node.type !== 'COMPONENT_SET')
           throw new Error('addComponentProperty() can only be called on components')
         const definition: ComponentPropertyDefinition = {
@@ -492,51 +514,37 @@ export function installComponentPropertyAccessors(
         if (node.type !== 'COMPONENT' && node.type !== 'COMPONENT_SET')
           throw new Error('deleteComponentProperty() can only be called on components')
         const definition = findDefinition(this, internals, name)
-        if (!definition) throw new Error(`Unknown component property: ${name}`)
+        // Figma keeps a variant axis: deleting one reads as a name it does not know.
+        if (!definition || definition.type === 'VARIANT')
+          throw new Error('in deleteComponentProperty: Invalid component property name')
         removeComponentProperty(graph(this, internals), node.id, definition.id)
       }
     }
   })
 }
-export function combineComponentsAsVariants(
-  graph: SceneGraph,
-  nodeIds: ReadonlyArray<string>,
-  parentId: string,
-  index?: number
-): SceneNode {
-  const components = requireDistinctComponents(graph, nodeIds)
-  const parent = graph.getNode(parentId)
-  if (!parent) throw new Error('Parent node not found')
-
-  const bounds = computeAbsoluteBounds(components, (id) => graph.getAbsolutePosition(id))
-  const parentPosition =
-    parentId === graph.rootId || parent.type === 'CANVAS'
-      ? { x: 0, y: 0 }
-      : graph.getAbsolutePosition(parentId)
-  const componentSet = graph.createNode('COMPONENT_SET', parentId, {
-    name: components[0].name.split('/')[0]?.trim() || 'Component Set',
-    x: bounds.x - parentPosition.x - COMPONENT_SET_PADDING,
-    y: bounds.y - parentPosition.y - COMPONENT_SET_PADDING,
-    width: bounds.width + COMPONENT_SET_PADDING * 2,
-    height: bounds.height + COMPONENT_SET_PADDING * 2,
-    fills: [
-      {
-        type: 'SOLID',
-        color: { r: 0.96, g: 0.96, b: 0.96, a: 1 },
-        opacity: 1,
-        visible: true
-      }
-    ]
-  })
-
-  for (const component of components) graph.reparentNode(component.id, componentSet.id)
-  if (index !== undefined) graph.reorderChild(componentSet.id, parentId, index)
-
-  const derived = deriveSlashVariantProperties(components, createComponentPropertyId)
-  if (derived) {
-    for (const [nodeId, changes] of derived.variants) graph.updateNode(nodeId, changes)
-    graph.updateNode(componentSet.id, { componentPropertyDefinitions: derived.definitions })
+/**
+ * Makes a component from a layer as Figma's `createComponentFromNode` does: a frame or group
+ * becomes a new component with its look and children in its place in the stack, and any other
+ * layer is wrapped; see `becomesComponent`. Unlike the canvas command, the component takes a new id.
+ */
+export function componentFromNode(graph: SceneGraph, node: SceneNode, parentId: string): SceneNode {
+  const index = graph.getNode(parentId)?.childIds.indexOf(node.id) ?? -1
+  if (!becomesComponent(node)) {
+    return wrapNodes(
+      graph,
+      'COMPONENT',
+      [node],
+      parentId,
+      index < 0 ? undefined : index,
+      componentWrapProps([node])
+    )
   }
-
-  return componentSet
+  const component = graph.createNode('COMPONENT', parentId, {
+    ...cloneNodeProps(node, null),
+    type: 'COMPONENT'
+  })
+  for (const childId of node.childIds) graph.reparentNode(childId, component.id)
+  if (index >= 0) graph.insertChildAt(component.id, parentId, index)
+  graph.deleteNode(node.id)
+  return component
 }

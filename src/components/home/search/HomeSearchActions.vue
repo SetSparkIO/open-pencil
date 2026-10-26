@@ -2,13 +2,18 @@
 import { templateRef } from '@vueuse/core'
 import { nextTick, watch } from 'vue'
 
-import { useI18n, useViewportKind } from '@open-pencil/vue'
+import { useViewportKind } from '@open-pencil/vue/editor/viewport-kind'
+import { useI18n } from '@open-pencil/vue/i18n'
 
 import { openFileDialog } from '@/app/shell/menu/use'
 import { activeTab } from '@/app/tabs'
 import AppButton from '@/components/ui/button/AppButton.vue'
 import AppInput from '@/components/ui/input/AppInput.vue'
 
+import HomeJoinRoom from './HomeJoinRoom.vue'
+
+/** The place a new design is created in, when it is not a local file. */
+const { destination = null } = defineProps<{ destination?: string | null }>()
 const emit = defineEmits<{ 'new-document': [] }>()
 const query = defineModel<string>({ required: true })
 const { menu, files } = useI18n()
@@ -47,6 +52,7 @@ watch(
       name="file-search"
       autocomplete="off"
       class="md:flex-1"
+      size="md"
       :density="isMobile ? 'comfortable' : 'compact'"
       :placeholder="isMobile ? files.searchFiles : files.searchRecentAndStorageFiles"
       :aria-label="files.searchFiles"
@@ -54,6 +60,9 @@ watch(
       <template #leading><icon-lucide-search class="size-4" /></template>
     </AppInput>
     <div class="grid grid-cols-2 gap-2 md:contents">
+      <div class="col-span-2 grid md:contents">
+        <HomeJoinRoom :size="isMobile ? 'lg' : 'md'" />
+      </div>
       <AppButton
         :size="isMobile ? 'lg' : 'md'"
         variant="outline"
@@ -71,7 +80,9 @@ watch(
         @click="emit('new-document')"
       >
         <template #leading><icon-lucide-plus class="size-3.5" /></template>
-        {{ files.newDesign }}
+        <span class="max-w-56 truncate">{{
+          destination ? files.newDesignIn({ place: destination }) : files.newDesign
+        }}</span>
       </AppButton>
     </div>
   </div>

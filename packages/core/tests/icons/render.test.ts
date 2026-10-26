@@ -2,17 +2,14 @@ import { describe, expect, test } from 'bun:test'
 
 import { expectDefined } from '#core-tests/helpers/assert'
 
-import { SkiaRenderer } from '@open-pencil/core'
-import {
-  exportFigFile,
-  initCanvasKit,
-  parseFigFile,
-  renderNodesToImage
-} from '@open-pencil/core/io'
+import { SkiaRenderer } from '@open-pencil/core/canvas'
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { initCanvasKit, renderNodesToImage } from '@open-pencil/core/io/formats/raster'
 import { SceneGraph } from '@open-pencil/scene-graph'
 import { parseColor } from '@open-pencil/scene-graph/color'
+import { readIcon, readIconTint } from '@open-pencil/scene-graph/icons'
 
-import { createIconFromPaths } from '#core/icons/render'
+import { iconColor, placeIcon, recolorIcon, swapIcon } from '#core/icons/render'
 import { buildIconData } from '#core/icons/svg'
 
 const BLACK = parseColor('#000000')
@@ -20,11 +17,20 @@ const BLACK = parseColor('#000000')
 function insertIcon(graph: SceneGraph, body: string, viewBox = 24, size = 24) {
   const icon = buildIconData({ body }, 'test', 'icon', viewBox, viewBox, size)
   const page = graph.getPages()[0]
-  const frame = createIconFromPaths(graph, icon, 'test:icon', size, BLACK, page.id)
+  const frame = placeIcon(graph, page.id, icon, { size, color: BLACK })
   return { page, frame, vectors: graph.getChildren(frame.id) }
 }
 
-describe('createIconFromPaths', () => {
+describe('placeIcon', () => {
+  test('leaves out shapes the SVG hides', () => {
+    const body = (hidden: string, none: string) =>
+      `<g ${hidden}><path d="M2 2h8v8H2z"/></g><path ${none} d="M14 2h8v8h-8z"/><path d="M2 14h8v8H2z"/>`
+    expect(insertIcon(new SceneGraph(), body('', '')).vectors).toHaveLength(3)
+    expect(
+      insertIcon(new SceneGraph(), body('visibility="hidden"', 'display="none"')).vectors
+    ).toHaveLength(1)
+  })
+
   test('keeps round stroke caps and joins after a .fig round trip', async () => {
     const graph = new SceneGraph()
     insertIcon(
@@ -86,5 +92,67 @@ describe('createIconFromPaths', () => {
     } finally {
       renderer.destroy()
     }
+  })
+})
+
+describe('icon identity', () => {
+  /** A two-path icon: one drawn in the icon's color, one in a fixed red. */
+  const BODY =
+    '<path fill="currentColor" d="M0 0h12v12H0z"/><path fill="#ff0000" d="M12 12h12v12H12z"/>'
+
+  test('records the icon and which paints its color sets, and survives a .fig round trip', async () => {
+    const graph = new SceneGraph()
+    const { frame, vectors } = insertIcon(graph, BODY)
+    expect(readIcon(frame)).toMatchObject({ name: 'test:icon' })
+    expect(vectors.map(readIconTint)).toEqual([['fill'], []])
+
+    const reopened = await parseFigFile((await exportFigFile(graph)).buffer as ArrayBuffer)
+    const icon = [...reopened.nodes.values()].find((node) => readIcon(node))
+    expect(icon && readIcon(icon)).toMatchObject({ name: 'test:icon' })
+  })
+
+  test("recolors only the paths drawn in the icon's color", () => {
+    const graph = new SceneGraph()
+    const { frame } = insertIcon(graph, BODY)
+    const blue = parseColor('#0000ff')
+    recolorIcon(graph, frame.id, blue)
+    const [tinted, fixed] = graph.getChildren(frame.id)
+    expect(tinted?.fills[0]?.color).toEqual(blue)
+    expect(fixed?.fills[0]?.color).toEqual(parseColor('#ff0000'))
+    expect(iconColor(graph, frame)).toEqual(blue)
+  })
+
+  test('swaps the glyph, keeping the frame, its size, and its color', () => {
+    const graph = new SceneGraph()
+    const { frame } = insertIcon(graph, BODY, 24, 32)
+    const green = parseColor('#00ff00')
+    recolorIcon(graph, frame.id, green)
+    const other = buildIconData(
+      { body: '<path fill="currentColor" d="M0 0h24v24H0z"/>' },
+      'test',
+      'square',
+      24,
+      24,
+      32
+    )
+    swapIcon(graph, frame.id, other)
+
+    const swapped = expectDefined(graph.getNode(frame.id), 'swapped icon')
+    expect(readIcon(swapped)).toMatchObject({ name: 'test:square' })
+    expect([swapped.width, swapped.height]).toEqual([32, 32])
+    const paths = graph.getChildren(frame.id)
+    expect(paths).toHaveLength(1)
+    expect(paths[0]?.fills[0]?.color).toEqual(green)
+  })
+
+  test('leaves artwork without a name in a set unnamed', () => {
+    const graph = new SceneGraph()
+    const icon = buildIconData({ body: BODY }, 'svg', 'custom', 24, 24, 24)
+    const frame = placeIcon(graph, graph.getPages()[0].id, icon, {
+      size: 24,
+      color: BLACK,
+      identity: false
+    })
+    expect(readIcon(frame)).toBeNull()
   })
 })

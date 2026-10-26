@@ -34,7 +34,7 @@ export const designCheck = tv({
     rowDetail: 'flex max-w-[50%] min-w-0 shrink items-center gap-1.5 text-muted tabular-nums',
     rowDetailText: 'truncate',
     rowAction:
-      'absolute top-1/2 right-1.5 hidden h-5 -translate-y-1/2 cursor-pointer items-center rounded bg-panel px-1.5 text-accent shadow-[0_0_0_1px_var(--color-border)] outline-none group-focus-within/row:flex group-hover/row:flex hover:bg-hover focus-visible:ring-1 focus-visible:ring-panel-focus',
+      'absolute top-1/2 right-1.5 hidden h-5 -translate-y-1/2 cursor-pointer items-center rounded bg-panel px-1.5 text-primary shadow-[0_0_0_1px_var(--color-border)] outline-none group-focus-within/row:flex group-hover/row:flex hover:bg-hover focus-visible:ring-1 focus-visible:ring-panel-focus',
     contrastSwatch:
       'flex h-3.5 shrink-0 items-center rounded-[3px] px-[3px] text-[9px] leading-none font-semibold shadow-[inset_0_0_0_1px_rgb(0_0_0/0.12)]',
     swatch: 'size-2.5 shrink-0 rounded-[3px] shadow-[inset_0_0_0_1px_rgb(0_0_0/0.12)]',
@@ -50,9 +50,9 @@ export const layerIssueMark = tv({
   },
   variants: {
     severity: {
-      error: { dot: 'bg-issue-error' },
-      warning: { dot: 'bg-issue-warning' },
-      info: { dot: 'bg-issue-info' }
+      error: { dot: 'bg-error' },
+      warning: { dot: 'bg-warning' },
+      info: { dot: 'bg-muted' }
     }
   }
 })
@@ -62,8 +62,8 @@ export const pageIssueBadge = tv({
   base: 'flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold tabular-nums',
   variants: {
     severity: {
-      error: 'bg-issue-error text-white',
-      warning: 'bg-issue-warning text-black'
+      error: 'bg-error-fill text-white',
+      warning: 'bg-warning text-panel'
     }
   }
 })

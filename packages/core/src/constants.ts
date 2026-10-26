@@ -1,5 +1,10 @@
 import type { Fill, Stroke } from '@open-pencil/scene-graph'
+import { WHITE } from '@open-pencil/scene-graph/constants'
 import type { Color } from '@open-pencil/scene-graph/primitives'
+
+import type { SelectionTheme } from '#core/canvas/renderer/types'
+
+export * from './ai/providers'
 
 export const IS_BROWSER = typeof window !== 'undefined'
 export const IS_TAURI = IS_BROWSER && '__TAURI_INTERNALS__' in window
@@ -8,47 +13,26 @@ export const BLACK: Color = { r: 0, g: 0, b: 0, a: 1 }
 export const TRANSPARENT: Color = { r: 0, g: 0, b: 0, a: 0 }
 export const DEFAULT_SHADOW_COLOR: Color = { r: 0, g: 0, b: 0, a: 0.25 }
 export const SELECTION_COLOR = { r: 0.23, g: 0.51, b: 0.96, a: 1 } satisfies Color
+/** Selection chrome when the app sets no accent: the default blue with white text. */
+export const DEFAULT_SELECTION_THEME: Readonly<SelectionTheme> = {
+  color: SELECTION_COLOR,
+  foreground: WHITE
+}
 export const COMPONENT_COLOR = { r: 0.592, g: 0.278, b: 1, a: 1 } satisfies Color
 /** Slot frames and their outlines, `#f24bbc` like the app's `--color-slot`. */
 export const SLOT_COLOR = { r: 0.949, g: 0.294, b: 0.737, a: 1 } satisfies Color
 export const SLOT_EMPTY_FILL_ALPHA = 0.08
 export const SNAP_COLOR = { r: 1.0, g: 0.0, b: 0.56, a: 1 } satisfies Color
+/** Guides through path vertices and their crosses, measured from Figma's pen and vector edit mode. */
+export const VERTEX_SNAP_COLOR = { r: 0.81, g: 0.3, b: 0.18, a: 1 } satisfies Color
+export const VERTEX_SNAP_GUIDE_ALPHA = 0.6
+export const VERTEX_SNAP_MARK_RADIUS = 2.5
 export const MEASUREMENT_COLOR = { r: 0.949, g: 0.282, b: 0.133, a: 1 } satisfies Color
 export const MEASUREMENT_PILL_PADDING_X = 5
 export const MEASUREMENT_PILL_HEIGHT = 18
 export const MEASUREMENT_PILL_RADIUS = 3
 export const MEASUREMENT_TEXT_BASELINE = 4
 export const CANVAS_BG_COLOR = { r: 0.96, g: 0.96, b: 0.96, a: 1 } satisfies Color
-export const CANVAS_BG_COLOR_DARK = { r: 0.173, g: 0.173, b: 0.173, a: 1 } satisfies Color // #2c2c2c, Figma-ish dark canvas
-
-/**
- * Returns the canvas background to initialize new pages with. Defers
- * to the OS `prefers-color-scheme` so users on a dark desktop don't
- * get a white flash every time they open a document.
- *
- * NOTE: this is deliberately the runtime/new-page path only. The
- * `.fig` serialization path continues to write the static light
- * `CANVAS_BG_COLOR` so files stay portable — a dark-theme user saving
- * a file must not force darkness on recipients.
- */
-export function getDefaultCanvasBgColor(): Color {
-  if (IS_BROWSER) {
-    const params = new URLSearchParams(window.location.search)
-    if ('env' in import.meta && import.meta.env.DEV && params.has('test')) {
-      return CANVAS_BG_COLOR
-    }
-  }
-
-  if (
-    IS_BROWSER &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-color-scheme: dark)').matches
-  ) {
-    return CANVAS_BG_COLOR_DARK
-  }
-  return CANVAS_BG_COLOR
-}
-
 export const SNAP_THRESHOLD_SCREEN_PX = 5
 
 export const RULER_SIZE = 20
@@ -66,6 +50,7 @@ export const RULER_HIGHLIGHT_ALPHA = 0.3
 
 export const PEN_HANDLE_RADIUS = 2.5
 export const PEN_VERTEX_RADIUS = 3
+export const PEN_ANCHOR_RADIUS = 4
 export const PEN_CLOSE_RADIUS_BOOST = 2
 export const PEN_PATH_STROKE_WIDTH = 2
 export const PARENT_OUTLINE_ALPHA = 0.5
@@ -73,8 +58,10 @@ export const PARENT_OUTLINE_DASH = 4
 export const DEFAULT_FONT_FAMILY = 'Inter'
 export const DEFAULT_FONT_SIZE = 14
 export const DEFAULT_STROKE_MITER_LIMIT = 4
+/** Figma's stroke weight for a node that has not been given one. */
 export const LABEL_FONT_SIZE = 11
 export const SIZE_FONT_SIZE = 10
+export const VALUE_FONT_SIZE = 11
 
 export const HANDLE_HALF_SIZE = 3
 
@@ -97,11 +84,14 @@ export const AUTO_LAYOUT_HOVER_TICK_LENGTH = 12
 export const AUTO_LAYOUT_HOVER_STRIPE_GAP = 8
 export const AUTO_LAYOUT_HOVER_STRIPE_WIDTH = 1
 export const AUTO_LAYOUT_HOVER_STROKE_WIDTH = 1.5
-export const AUTO_LAYOUT_HOVER_CHILD_DASH = 4
+/** Dash and gap, in screen pixels, of the dotted outlines around auto layout children (Figma 126). */
+export const LAYOUT_OUTLINE_DASH = 1.75
+export const LAYOUT_OUTLINE_GAP = 1.25
 export const AUTO_LAYOUT_HOVER_VALUE_OFFSET = 18
-export const AUTO_LAYOUT_HOVER_VALUE_PILL_HEIGHT = 22
-export const AUTO_LAYOUT_HOVER_VALUE_PILL_RADIUS = 5
-export const AUTO_LAYOUT_HOVER_VALUE_PILL_PADDING_X = 5
+// Measured on Figma desktop 126's padding and gap value pills.
+export const AUTO_LAYOUT_HOVER_VALUE_PILL_HEIGHT = 16.5
+export const AUTO_LAYOUT_HOVER_VALUE_PILL_RADIUS = 2.5
+export const AUTO_LAYOUT_HOVER_VALUE_PILL_PADDING_X = 4.5
 export const AUTO_LAYOUT_HOVER_GAP_REGION_TOLERANCE = 12
 export const AUTO_LAYOUT_HOVER_TICK_HIT_TOLERANCE = 8
 export const AUTO_LAYOUT_HOVER_PADDING_REGION_TOLERANCE = 20
@@ -111,18 +101,29 @@ export const AUTO_LAYOUT_HOVER_BLUE = { r: 0.28, g: 0.64, b: 1, a: 0.82 } satisf
 export const AUTO_LAYOUT_HOVER_BLUE_FILL = { r: 0.28, g: 0.64, b: 1, a: 0.1 } satisfies Color
 export const AUTO_LAYOUT_HOVER_MAGENTA = { r: 1, g: 0.32, b: 0.68, a: 0.78 } satisfies Color
 export const AUTO_LAYOUT_HOVER_MAGENTA_FILL = { r: 1, g: 0.32, b: 0.68, a: 0.1 } satisfies Color
+// The value pills over a gap and a padding, sampled from Figma desktop 126.
+export const AUTO_LAYOUT_HOVER_GAP_PILL = { r: 0.886, g: 0.271, b: 0.686, a: 1 } satisfies Color
+export const AUTO_LAYOUT_HOVER_PADDING_PILL = { r: 0.271, g: 0.592, b: 0.973, a: 1 } satisfies Color
 
-export const SECTION_CORNER_RADIUS = 5
 export const SECTION_TITLE_HEIGHT = 24
 export const SECTION_TITLE_PADDING_X = 6
 export const SECTION_TITLE_RADIUS = 5
 export const SECTION_TITLE_FONT_SIZE = 11
+/**
+ * The family section titles draw in: the bundled Inter SemiBold under a name of its own, on the
+ * canvas and in the page, so renaming a title shows the same glyphs and document fonts named
+ * Inter cannot replace them.
+ */
+export const SECTION_TITLE_FONT_FAMILY = 'OpenPencil Section Title'
+export const SECTION_TITLE_FONT_URL = '/Inter-SemiBold.ttf'
 export const SECTION_TITLE_GAP = 6
 export const SECTION_HOVER_STROKE_WIDTH = 2
 
 export const COMPONENT_SET_DASH = 6
 export const COMPONENT_SET_DASH_GAP = 4
 export const COMPONENT_SET_BORDER_WIDTH = 1.5
+/** Corners of the outline the editor draws around a component set with no strokes of its own. */
+export const COMPONENT_SET_OUTLINE_RADIUS = 5
 export const COMPONENT_LABEL_FONT_SIZE = 11
 export const COMPONENT_LABEL_GAP = 6
 export const COMPONENT_LABEL_ICON_SIZE = 10
@@ -131,7 +132,6 @@ export const COMPONENT_LABEL_ICON_GAP = 4
 export const RULER_TARGET_PIXEL_SPACING = 100
 export const RULER_MAJOR_TOLERANCE = 0.01
 
-export const FLASH_COLOR = SELECTION_COLOR
 export const FLASH_ATTACK_MS = 200
 export const FLASH_HOLD_MS = 400
 export const FLASH_RELEASE_MS = 300
@@ -166,313 +166,27 @@ export const AI_DONE_COLOR = { r: 0.16, g: 0.73, b: 0.36 }
 export const AI_PULSE_PERIOD_MS = 1500
 export const AI_DONE_DURATION_MS = 800
 
-export const TEXT_SELECTION_COLOR = { r: 0.26, g: 0.52, b: 0.96, a: 0.3 }
+/** Opacity of the selection color behind selected text while editing. */
+export const TEXT_SELECTION_ALPHA = 0.3
+/** The caret's colour where the text's fill gives it none, as Figma's. */
 export const TEXT_CARET_COLOR = BLACK
 export const TEXT_CARET_WIDTH = 1
 
-export type ACPAgentID = 'claude-code' | 'codex' | 'gemini-cli'
-
-export interface ACPAgentDef {
-  id: ACPAgentID
-  name: string
-  command: string
-  args: string[]
-  installCommand?: string
-}
-
-export const ACP_AGENTS: ACPAgentDef[] = [
-  {
-    id: 'claude-code',
-    name: 'Claude Code',
-    command: 'claude-agent-acp',
-    args: [],
-    installCommand: 'npm i -g @agentclientprotocol/claude-agent-acp'
-  },
-  {
-    id: 'codex',
-    name: 'Codex',
-    command: 'codex-acp',
-    args: [],
-    installCommand: 'npm i -g @zed-industries/codex-acp'
-  },
-  {
-    id: 'gemini-cli',
-    name: 'Gemini CLI',
-    command: 'gemini',
-    args: ['--acp'],
-    installCommand: 'npm i -g @google/gemini-cli'
-  }
-]
-
-export type AIProviderID =
-  | 'openrouter'
-  | 'anthropic'
-  | 'openai'
-  | 'google'
-  | 'deepseek'
-  | 'openai-compatible'
-  | 'zai'
-  | 'minimax'
-  | 'anthropic-compatible'
-  | 'harness:pi'
-  | `acp:${ACPAgentID}`
-
-export interface ModelOption {
-  id: string
-  name: string
-  tag?: string
-  capabilities?: readonly ('tools' | 'vision')[]
-  recommendedMaxOutputTokens?: number
-  releaseDate?: string
-  status?: 'active' | 'beta' | 'deprecated'
-}
-
-export interface AIProviderDef {
-  id: AIProviderID
-  name: string
-  keyPlaceholder: string
-  keyURL: string
-  models: ModelOption[]
-  defaultModel: string
-  supportsCustomBaseURL?: boolean
-  supportsCustomModel?: boolean
-}
-
-export const HARNESS_PROVIDER_ID = 'harness:pi' as const
-
-export const AI_PROVIDERS: AIProviderDef[] = [
-  {
-    id: HARNESS_PROVIDER_ID,
-    name: 'Pi',
-    keyPlaceholder: 'Provider API key',
-    keyURL: '',
-    defaultModel: '',
-    supportsCustomModel: true,
-    models: []
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    keyPlaceholder: 'sk-or-…',
-    keyURL: 'https://openrouter.ai/keys',
-    defaultModel: 'anthropic/claude-sonnet-5.5',
-    supportsCustomModel: true,
-    models: [
-      {
-        id: 'anthropic/claude-sonnet-5.5',
-        name: 'Claude Sonnet 5.5',
-        tag: 'Best for design',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'anthropic/claude-opus-5.5',
-        name: 'Claude Opus 5.5',
-        tag: 'Deep reasoning',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'anthropic/claude-fable-5.1',
-        name: 'Claude Fable 5.1',
-        tag: 'Most capable',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'openai/gpt-6.1-sol',
-        name: 'GPT-6.1 Sol',
-        tag: 'Latest OpenAI',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'google/gemini-3.8-flash',
-        name: 'Gemini 3.8 Flash',
-        tag: 'Fast',
-        capabilities: ['tools', 'vision']
-      },
-      { id: 'z-ai/glm-5.3', name: 'GLM-5.3', capabilities: ['tools'] },
-      {
-        id: 'deepseek/deepseek-v4-pro',
-        name: 'DeepSeek V4 Pro',
-        tag: 'Reasoning',
-        capabilities: ['tools']
-      },
-      {
-        id: 'moonshotai/kimi-k3',
-        name: 'Kimi K3',
-        tag: 'Vision + code',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'qwen/qwen3.8-27b:free',
-        name: 'Qwen3.8 27B',
-        tag: 'Free',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'google/gemma-4-31b-it:free',
-        name: 'Gemma 4 31B',
-        tag: 'Free',
-        capabilities: ['tools', 'vision']
-      }
-    ]
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic',
-    keyPlaceholder: 'sk-ant-…',
-    keyURL: 'https://console.anthropic.com/settings/keys',
-    defaultModel: 'claude-sonnet-5-5',
-    models: [
-      {
-        id: 'claude-sonnet-5-5',
-        name: 'Claude Sonnet 5.5',
-        tag: 'Best for design',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'claude-opus-5-5',
-        name: 'Claude Opus 5.5',
-        tag: 'Deep reasoning',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'claude-fable-5-1',
-        name: 'Claude Fable 5.1',
-        tag: 'Most capable',
-        capabilities: ['tools', 'vision']
-      }
-    ]
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    keyPlaceholder: 'sk-…',
-    keyURL: 'https://platform.openai.com/api-keys',
-    defaultModel: 'gpt-6.1-sol',
-    models: [
-      { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', tag: 'Best', capabilities: ['tools', 'vision'] },
-      {
-        id: 'gpt-6-astra',
-        name: 'GPT-6 Astra',
-        tag: 'Smartest',
-        capabilities: ['tools', 'vision']
-      },
-      { id: 'gpt-6-luna', name: 'GPT-6 Luna', tag: 'Fast', capabilities: ['tools', 'vision'] }
-    ]
-  },
-  {
-    id: 'google',
-    name: 'Google AI',
-    keyPlaceholder: 'AIza…',
-    keyURL: 'https://aistudio.google.com/apikey',
-    defaultModel: 'gemini-3.8-flash',
-    models: [
-      {
-        id: 'gemini-3.8-flash',
-        name: 'Gemini 3.8 Flash',
-        tag: 'Latest',
-        capabilities: ['tools', 'vision']
-      },
-      { id: 'gemini-3.7-flash', name: 'Gemini 3.7 Flash', capabilities: ['tools', 'vision'] },
-      {
-        id: 'gemini-flash-latest',
-        name: 'Gemini Flash Latest',
-        tag: 'Alias',
-        capabilities: ['tools', 'vision']
-      },
-      {
-        id: 'gemini-3.1-pro-preview',
-        name: 'Gemini 3.1 Pro',
-        tag: 'Pro',
-        capabilities: ['tools', 'vision']
-      }
-    ]
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    keyPlaceholder: 'sk-…',
-    keyURL: 'https://platform.deepseek.com/api_keys',
-    defaultModel: 'deepseek-v4-flash',
-    models: [
-      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', tag: 'Fast' },
-      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', tag: 'Reasoning' }
-    ]
-  },
-  {
-    id: 'zai',
-    name: 'Z.ai',
-    keyPlaceholder: 'API key',
-    keyURL: 'https://docs.z.ai/devpack/quick-start',
-    defaultModel: 'glm-5.3',
-    models: [
-      { id: 'glm-5.3', name: 'GLM-5.3', tag: 'Best' },
-      { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', tag: 'Fast' },
-      { id: 'glm-5.2', name: 'GLM-5.2' },
-      {
-        id: 'glm-5v-turbo',
-        name: 'GLM-5V-Turbo',
-        tag: 'Vision',
-        capabilities: ['tools', 'vision']
-      },
-      { id: 'glm-5.1', name: 'GLM-5.1' },
-      { id: 'glm-5', name: 'GLM-5' },
-      { id: 'glm-5-code', name: 'GLM-5-Code' },
-      { id: 'glm-4.7', name: 'GLM-4.7' },
-      { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX' },
-      { id: 'glm-4.6', name: 'GLM-4.6' },
-      { id: 'glm-4.5', name: 'GLM-4.5' },
-      { id: 'glm-4.5-x', name: 'GLM-4.5-X' },
-      { id: 'glm-4.5-air', name: 'GLM-4.5-Air' },
-      { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX' },
-      { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-0414-128K' },
-      { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash', tag: 'Free' },
-      { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash', tag: 'Free' }
-    ]
-  },
-  {
-    id: 'minimax',
-    name: 'MiniMax',
-    keyPlaceholder: 'API key',
-    keyURL: 'https://platform.minimax.io/user-center/basic-information/interface-key',
-    defaultModel: 'MiniMax-M3',
-    models: [
-      { id: 'MiniMax-M3', name: 'MiniMax-M3', tag: 'Best' },
-      { id: 'MiniMax-M2.7', name: 'MiniMax-M2.7' },
-      { id: 'MiniMax-M2.7-highspeed', name: 'MiniMax-M2.7-highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2.5', name: 'MiniMax-M2.5' },
-      { id: 'MiniMax-M2.5-highspeed', name: 'MiniMax-M2.5 Highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2.1', name: 'MiniMax-M2.1' },
-      { id: 'MiniMax-M2.1-highspeed', name: 'MiniMax-M2.1 Highspeed', tag: 'Fast' },
-      { id: 'MiniMax-M2', name: 'MiniMax-M2' }
-    ]
-  },
-  {
-    id: 'openai-compatible',
-    name: 'OpenAI-compatible',
-    keyPlaceholder: 'API key',
-    keyURL: '',
-    defaultModel: '',
-    models: [],
-    supportsCustomBaseURL: true,
-    supportsCustomModel: true
-  },
-  {
-    id: 'anthropic-compatible',
-    name: 'Anthropic-compatible',
-    keyPlaceholder: 'API key',
-    keyURL: '',
-    defaultModel: '',
-    models: [],
-    supportsCustomBaseURL: true,
-    supportsCustomModel: true
-  }
-]
-
-export const DEFAULT_AI_PROVIDER: AIProviderID = 'openai-compatible'
-export const DEFAULT_AI_MODEL =
-  AI_PROVIDERS.find((provider) => provider.id === DEFAULT_AI_PROVIDER)?.defaultModel ?? ''
-
 export const AUTOMATION_HTTP_PORT = 7600
+/**
+ * Request header the app's own ACP and Pi harness chats send to the MCP server, so their sessions
+ * show as those agents rather than as an outside MCP client.
+ */
+export const MCP_AGENT_HEADER = 'x-openpencil-agent'
+
+/** The name the app's chats give OpenPencil's MCP server in an agent's session. */
+export const OPEN_PENCIL_MCP_SERVER = 'open-pencil'
+
+/**
+ * Request header naming the app chat whose agent opens an MCP session, so the app can tell that
+ * this chat's agent reached its tools before it sends the prompt.
+ */
+export const MCP_CHAT_HEADER = 'x-openpencil-chat'
 
 export const GOOGLE_FONTS_API_KEY = 'AIzaSyD1tYDR_dUEiV-Tw1vksEhZbUytgKW5pc8'
 
@@ -506,9 +220,10 @@ export const CJK_FALLBACK_FAMILIES_LINUX = [
 
 export const CJK_GOOGLE_FONTS = ['Noto Sans SC', 'Noto Sans TC', 'Noto Sans JP', 'Noto Sans KR']
 
+/** Figma's #D9D9D9 for new shapes. */
 export const DEFAULT_SHAPE_FILL: Fill = {
   type: 'SOLID',
-  color: { r: 0.83, g: 0.83, b: 0.83, a: 1 },
+  color: { r: 217 / 255, g: 217 / 255, b: 217 / 255, a: 1 },
   opacity: 1,
   visible: true
 }
@@ -520,33 +235,55 @@ export const DEFAULT_FRAME_FILL: Fill = {
   visible: true
 }
 
-export const SECTION_DEFAULT_FILL: Fill = {
-  type: 'SOLID',
-  color: { r: 0.37, g: 0.37, b: 0.37, a: 1 },
-  opacity: 1,
-  visible: true
+/** The light or dark interface a new page or section takes its colors from, as in Figma. */
+export type InterfaceTheme = 'light' | 'dark'
+
+/** A new page's background, which Figma picks from the interface theme it was made in. */
+export const PAGE_DEFAULT_BACKGROUNDS: Record<InterfaceTheme, Color> = {
+  light: CANVAS_BG_COLOR,
+  dark: { r: 0x1e / 255, g: 0x1e / 255, b: 0x1e / 255, a: 1 }
+}
+
+/** A new section's fill, which Figma picks from the interface theme it was made in. */
+export const SECTION_DEFAULT_FILLS: Record<InterfaceTheme, Fill> = {
+  light: { type: 'SOLID', color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true },
+  dark: {
+    type: 'SOLID',
+    color: { r: 0x44 / 255, g: 0x44 / 255, b: 0x44 / 255, a: 1 },
+    opacity: 1,
+    visible: true
+  }
 }
 
 export const SECTION_DEFAULT_STROKE: Stroke = {
   type: 'SOLID',
-  color: { r: 0.55, g: 0.55, b: 0.55, a: 1 },
+  color: { r: 1, g: 1, b: 1, a: 1 },
   weight: 1,
-  opacity: 1,
+  opacity: 0.1,
   visible: true,
   align: 'INSIDE'
 }
+
+export const SECTION_CORNER_RADIUS = 2
 
 export const ZOOM_DIVISOR = 50
 export const ZOOM_SCALE_MIN = 0.75
 export const ZOOM_SCALE_MAX = 1.25
 
 export const PEN_CLOSE_THRESHOLD = 8
+/**
+ * Screen pixels a pencil sample may stray from the line through its neighbours before the curve
+ * keeps it, so a stroke drawn zoomed in keeps more detail.
+ */
+export const PENCIL_TOLERANCE = 2.5
+/** A new pencil layer's stroke weight (Figma desktop 126). */
+export const PENCIL_STROKE_WEIGHT = 2
 export const ROTATION_SNAP_DEGREES = 15
-export const CORNER_ROTATE_ZONE = 16
 export const HANDLE_HIT_RADIUS = 6
+/** How far outside a shape, in screen pixels, a click still selects it (Figma desktop 126). */
+export const LAYER_HIT_PAD = 3.5
 export const ROTATION_HANDLE_DISTANCE = 24
 export const DEFAULT_TEXT_WIDTH = 200
 export const DEFAULT_TEXT_HEIGHT = 24
-export const AUTO_LAYOUT_BREAK_THRESHOLD = 8
 /** Space Figma leaves between a duplicated top-level frame and the layers to its left. */
 export const DUPLICATE_FRAME_GAP = 40

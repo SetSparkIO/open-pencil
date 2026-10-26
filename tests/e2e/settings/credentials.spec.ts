@@ -133,7 +133,7 @@ test('MCP automation settings filter and persist tool availability', async ({ pa
   await expect(authentication).toHaveAttribute('data-state', 'unchecked')
   await authentication.click()
 
-  await page.getByRole('button', { name: 'Tool access', exact: true }).click()
+  await page.getByTestId('settings-mcp-tool-access').click()
   const search = page.getByRole('searchbox', { name: 'Search tools' })
   await search.fill('create_shape')
   await expect(search).toHaveValue('create_shape')
@@ -146,7 +146,7 @@ test('MCP automation settings filter and persist tool availability', async ({ pa
   await canvas.waitForInit()
   await page.getByTestId('app-settings-trigger').click()
   await page.getByTestId('settings-section-mcp').click()
-  await page.getByRole('button', { name: 'Tool access', exact: true }).click()
+  await page.getByTestId('settings-mcp-tool-access').click()
   await expect(createShape).toHaveAttribute('data-state', 'unchecked')
 
   await page.getByRole('button', { name: 'Restore defaults' }).click()
@@ -238,7 +238,8 @@ test('remembered browser credentials survive reload and clear centrally', async 
 })
 
 test('browser credential preferences live in General, not the footer', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/?test')
+  await new CanvasHelper(page).waitForInit()
   await page.keyboard.press('ControlOrMeta+,')
   const panel = page.getByTestId('settings-general-panel')
   const remember = panel.getByRole('switch', { name: 'Remember API keys on this device' })

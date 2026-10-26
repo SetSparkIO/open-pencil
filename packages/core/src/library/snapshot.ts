@@ -1,6 +1,8 @@
-import { cloneNodeProps, SceneGraph } from '@open-pencil/scene-graph'
-import type { SceneNode } from '@open-pencil/scene-graph'
+import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
+import { cloneNodeProps } from '@open-pencil/scene-graph/copy'
+import { contentPluginData } from '@open-pencil/scene-graph/plugin-data'
 
+import { remapCopiedReferences } from './copied-references'
 import { contentHash } from './hash'
 import { assertLibraryAssetKey } from './identity'
 import type { LibraryAssetDescriptor, PortableLibrarySnapshot } from './types'
@@ -15,8 +17,7 @@ const VOLATILE_NODE_FIELDS = new Set([
   'textPicture',
   'derivedTextGlyphs',
   'derivedLayout',
-  'librarySource',
-  'pluginData'
+  'librarySource'
 ])
 
 function assetKey(node: SceneNode): string {
@@ -50,26 +51,14 @@ function addSnapshotNode(
 ): void {
   const node = source.getNode(sourceId)
   if (!node) return
-  const created = target.createNode(
-    node.type,
-    targetParentId,
-    cloneNodeProps(node, node.componentId)
-  )
+  const created = target.createNode(node.type, targetParentId, {
+    ...cloneNodeProps(node, node.componentId),
+    // A behaviour or other plugin content belongs to the asset; where it came from does not.
+    pluginData: contentPluginData(node.pluginData)
+  })
   mappedIds.set(sourceId, created.id)
   for (const childId of node.childIds)
     addSnapshotNode(source, target, childId, created.id, mappedIds)
-}
-
-function remapSnapshotReferences(graph: SceneGraph, mappedIds: Map<string, string>): void {
-  for (const [sourceId, targetId] of mappedIds) {
-    const sourceTarget = graph.getNode(targetId)
-    if (!sourceTarget) continue
-    const componentId = sourceTarget.componentId
-    if (componentId && mappedIds.has(componentId)) {
-      graph.updateNode(targetId, { componentId: mappedIds.get(componentId) ?? null })
-    }
-    if (sourceId === targetId) throw new Error('Snapshot IDs must be remapped')
-  }
 }
 
 export function extractLibrarySnapshot(
@@ -91,21 +80,15 @@ export function extractLibrarySnapshot(
   page.name = 'Library definitions'
   page.internalOnly = true
   const mappedIds = new Map<string, string>()
-  const sourceComponentIds = new Map<string, string | null>()
   const closureRoots = [...closure]
     .map((id) => source.getNode(id))
     .filter((node): node is SceneNode =>
       Boolean(node && (!node.parentId || !closure.has(node.parentId)))
     )
   for (const root of closureRoots) addSnapshotNode(source, snapshot, root.id, page.id, mappedIds)
-  for (const sourceId of mappedIds.keys()) {
-    sourceComponentIds.set(sourceId, source.getNode(sourceId)?.componentId ?? null)
-  }
-  for (const [sourceId, targetId] of mappedIds) {
-    const componentId = sourceComponentIds.get(sourceId)
-    if (componentId) snapshot.updateNode(targetId, { componentId })
-  }
-  remapSnapshotReferences(snapshot, mappedIds)
+  for (const [sourceId, targetId] of mappedIds)
+    if (sourceId === targetId) throw new Error('Snapshot IDs must be remapped')
+  remapCopiedReferences(snapshot, mappedIds)
 
   for (const imageHash of new Set(
     [...closure].flatMap((id) => {
@@ -172,7 +155,13 @@ export function canonicalLibraryNode(
           key !== 'name' &&
           key !== 'symbolDescription'
       )
-      .map(([key, value]) => [key, normalizedLibraryField(key, value)])
+      .map(([key, value]) => [
+        key,
+        // Plugin content such as a behaviour is part of the asset; its bookkeeping is not.
+        key === 'pluginData'
+          ? contentPluginData(node.pluginData)
+          : normalizedLibraryField(key, value)
+      ])
   )
   const component = node.componentId ? graph.getNode(node.componentId) : undefined
   const dependencyKey =

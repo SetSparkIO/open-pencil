@@ -2,11 +2,11 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   createHeadlessCSSRuntime,
-  jsx,
   jsxToDesignDocument,
   jsxToSceneGraph,
   tailwindJSXToSceneGraph
 } from '@open-pencil/dom-css'
+import { jsx } from '@open-pencil/dom-css/browser'
 
 import { tailwindCardClasses } from '#tests/helpers/dom-css'
 
@@ -47,8 +47,9 @@ describe('@open-pencil/dom-css JSX authoring', () => {
     const card = page ? graph.getChildren(page.id)[0] : undefined
 
     expect(card?.type).toBe('FRAME')
-    expect(card?.width).toBe(320)
-    expect(card?.height).toBe(160)
+    // CSS sizes the content box, so padding comes on top.
+    expect(card?.width).toBe(320 + 2 * 24)
+    expect(card?.height).toBe(160 + 2 * 24)
     expect(card?.paddingLeft).toBe(24)
   })
 

@@ -10,17 +10,16 @@ import type {
   DiagnosticLevel,
   DiagnosticValue
 } from '../types'
+import { tokenUsageSchema } from './schema'
 
 const modelStepSchema = v.object({
   provider: v.string(),
   model: v.string(),
-  inputTokens: v.nullable(v.number()),
-  outputTokens: v.nullable(v.number()),
-  cacheReadTokens: v.nullable(v.number()),
-  cacheWriteTokens: v.nullable(v.number())
+  ...tokenUsageSchema.entries
 })
 
 const chatCompletedSchema = v.object({ finishReason: v.nullable(v.string()) })
+const chatStoppedSchema = v.object({})
 const chatFailedSchema = v.object({
   errorName: v.string(),
   errorCode: v.optional(v.nullable(v.string())),
@@ -40,7 +39,12 @@ const toolCompletedSchema = v.object({
 export type AIDiagnosticContext = Pick<DiagnosticEvent, 'sessionId' | 'runId'>
 
 function recordAIEvent(
-  name: 'model.step.completed' | 'chat.completed' | 'chat.failed' | 'tool.completed',
+  name:
+    | 'model.step.completed'
+    | 'chat.completed'
+    | 'chat.stopped'
+    | 'chat.failed'
+    | 'tool.completed',
   attributes: Record<string, DiagnosticValue>,
   schema: v.GenericSchema,
   context: AIDiagnosticContext = {},
@@ -74,6 +78,11 @@ export function recordChatCompleted(
   context?: AIDiagnosticContext
 ): void {
   recordAIEvent('chat.completed', input, chatCompletedSchema, context)
+}
+
+/** The person stopped the reply before it finished. */
+export function recordChatStopped(context?: AIDiagnosticContext): void {
+  recordAIEvent('chat.stopped', {}, chatStoppedSchema, context)
 }
 
 export function recordChatFailed(

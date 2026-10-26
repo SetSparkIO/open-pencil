@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { PositionControlsRoot, useI18n } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
+import { PositionControlsRoot } from '@open-pencil/vue/primitives/PositionControls'
 
 import { useEditorStore } from '@/app/editor/active-store'
 import NumberField from '@/components/inputs/NumberField.vue'
@@ -27,9 +28,27 @@ function handleAlign(
 
 <template>
   <PositionControlsRoot
-    v-slot="{ active, isMulti, xValue, yValue, wValue, hValue, rotationValue, actions }"
+    v-slot="{
+      active,
+      xValue,
+      yValue,
+      rotationValue,
+      rotates,
+      inAutoLayout,
+      ignoresAutoLayout,
+      actions
+    }"
   >
     <PanelSection v-if="active" :label="panels.position">
+      <template v-if="inAutoLayout" #actions>
+        <IconButton
+          :label="panels.ignoreAutoLayout"
+          :active="ignoresAutoLayout"
+          @click="actions.toggleIgnoreAutoLayout"
+        >
+          <icon-lucide-scan class="size-3.5" />
+        </IconButton>
+      </template>
       <div role="toolbar" :aria-label="panels.position" class="mb-1.5 flex justify-between">
         <div class="flex gap-0.5">
           <IconButton
@@ -104,34 +123,7 @@ function handleAlign(
         </Tip>
       </PanelGrid>
 
-      <PanelGrid v-if="isMulti" :columns="2" class="mt-1.5">
-        <Tip :label="panels.width">
-          <NumberField
-            icon="W"
-            data-property="width"
-            :aria-label="panels.width"
-            :model-value="wValue"
-            :min="1"
-            @update:model-value="actions.updateProp('width', $event)"
-            @commit="(v: number, p: number) => actions.commitProp('width', v, p)"
-            @cancel="actions.cancelProp('width')"
-          />
-        </Tip>
-        <Tip :label="panels.height">
-          <NumberField
-            icon="H"
-            data-property="height"
-            :aria-label="panels.height"
-            :model-value="hValue"
-            :min="1"
-            @update:model-value="actions.updateProp('height', $event)"
-            @commit="(v: number, p: number) => actions.commitProp('height', v, p)"
-            @cancel="actions.cancelProp('height')"
-          />
-        </Tip>
-      </PanelGrid>
-
-      <PanelGrid :columns="2" class="mt-1.5">
+      <PanelGrid v-if="rotates" :columns="2" class="mt-1.5">
         <Tip :label="panels.rotation">
           <NumberField
             suffix="°"

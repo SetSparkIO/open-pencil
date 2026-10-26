@@ -70,3 +70,54 @@ test('nonlinear, unsupported, overflowing, and unbounded expressions fail rather
   for (let index = 0; index < 66; index++) deep = multiply(literal(1), deep)
   expect(() => linearVariableExpression(deep)).toThrow('maximum depth')
 })
+
+test('STRINGIFY of one alias is that alias, as Figma binds a number to text content', () => {
+  const stringify = (...expressionArguments: VariableDataEntry[]): VariableDataEntry => ({
+    dataType: 'EXPRESSION',
+    value: { expressionValue: { expressionFunction: 'STRINGIFY', expressionArguments } }
+  })
+  expect(linearVariableExpression(stringify(alias))).toEqual({
+    reference: alias.value?.alias,
+    multiplier: 1
+  })
+  expect(() => linearVariableExpression(stringify(multiply(literal(2), alias)))).toThrow(
+    'STRINGIFY'
+  )
+  expect(() => linearVariableExpression(stringify(alias, alias))).toThrow('STRINGIFY')
+  // Reads as a multiplier of 1, but saving it as a plain binding would drop the product.
+  expect(() =>
+    linearVariableExpression(stringify(multiply(literal(2), literal(0.5), alias)))
+  ).toThrow('STRINGIFY')
+})
+
+test('IS_TRUTHY of one alias is that alias, as Figma binds a boolean or text to visibility', () => {
+  const truthy = (...expressionArguments: VariableDataEntry[]): VariableDataEntry => ({
+    dataType: 'EXPRESSION',
+    resolvedDataType: 'BOOLEAN',
+    value: { expressionValue: { expressionFunction: 'IS_TRUTHY', expressionArguments } }
+  })
+  const booleanAlias = { ...alias, resolvedDataType: 'BOOLEAN' }
+  expect(linearVariableExpression(truthy(booleanAlias))).toEqual({
+    reference: alias.value?.alias,
+    multiplier: 1
+  })
+  const props = nodeChangeToProps(
+    {
+      type: 'FRAME',
+      parameterConsumptionMap: {
+        entries: [{ variableField: 'VISIBLE', variableData: truthy(booleanAlias) }]
+      }
+    },
+    []
+  )
+  expect(props.boundVariables).toEqual({ visible: '1:2' })
+  expect(props.variableBindingScales).toEqual({})
+  expect(() => linearVariableExpression(truthy())).toThrow('one alias')
+  expect(() => linearVariableExpression(truthy(booleanAlias, booleanAlias))).toThrow('one alias')
+  expect(() => linearVariableExpression(truthy(multiply(literal(2), alias)))).toThrow('one alias')
+  // The binding resolves through Figma's truthiness, so a text alias reads the same way.
+  expect(linearVariableExpression(truthy({ ...alias, resolvedDataType: 'STRING' }))).toEqual({
+    reference: alias.value?.alias,
+    multiplier: 1
+  })
+})

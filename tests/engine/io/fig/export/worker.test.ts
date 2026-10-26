@@ -1,22 +1,21 @@
 import { describe, test, expect, beforeAll, setDefaultTimeout } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { unzipSync } from 'fflate'
 
-import {
-  parseFigFile,
-  exportFigFile,
-  compressFigDataSync,
-  initCodec,
-  SceneGraph
-} from '@open-pencil/core'
+import { parseFigFile, exportFigFile } from '@open-pencil/core/io/formats/fig'
+import { compressFigDataSync } from '@open-pencil/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { SceneGraph } from '@open-pencil/scene-graph'
 
+import { coreSourcePath, testPath } from '#tests/helpers/paths'
 import { heavy } from '#tests/helpers/test-utils'
 
 setDefaultTimeout(30_000)
 
-const FIXTURES = resolve(import.meta.dir, '../../../../fixtures')
+const FIXTURES = testPath('fixtures')
 const CUSTOM_FIG_KIWI_VERSION = 77
 
 function canvasFigVersion(figData: Uint8Array): number {
@@ -38,10 +37,9 @@ function compressInWorker(message: {
   figKiwiVersion?: number
 }): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(
-      new URL('../../../../../packages/core/src/io/formats/fig/export-worker.ts', import.meta.url),
-      { type: 'module' }
-    )
+    const worker = new Worker(pathToFileURL(coreSourcePath('io/formats/fig/export/worker.ts')), {
+      type: 'module'
+    })
     worker.onmessage = (event: MessageEvent<Uint8Array>) => {
       worker.terminate()
       resolve(event.data)

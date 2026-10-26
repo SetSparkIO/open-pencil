@@ -1,16 +1,14 @@
 import * as v from 'valibot'
 
-import type { SceneNode } from '@open-pencil/scene-graph'
-
-import { toolNumber, nodeIdInput } from '#core/tools/input'
-import { defineTool, nodeNotFound } from '#core/tools/schema'
+import { OpenPencilAPI } from '#core/openpencil-api'
+import { toolNumber, nodeIdInputSchema, defineTool, nodeNotFound } from '#core/tools/schema'
 
 export const setLayout = defineTool({
   name: 'set_layout',
 
   description: 'Set auto-layout (flexbox) on a frame. Direction, alignment, spacing, padding.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
+  input: v.strictObject({
     id: v.pipe(v.string(), v.description('Frame node ID')),
     direction: v.optional(
       v.pipe(
@@ -82,7 +80,7 @@ export const setLayout = defineTool({
     if (args.align !== undefined) node.primaryAxisAlignItems = args.align
     if (args.counter_align !== undefined) node.counterAxisAlignItems = args.counter_align
     if (args.flow_direction !== undefined)
-      node.layoutDirection = args.flow_direction as SceneNode['layoutDirection']
+      new OpenPencilAPI(figma).setLayoutDirection(node, args.flow_direction)
 
     if (args.padding !== undefined) {
       node.paddingTop = args.padding
@@ -108,8 +106,8 @@ export const setConstraints = defineTool({
 
   description: 'Set resize constraints for a node within its parent.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
-    id: nodeIdInput,
+  input: v.strictObject({
+    id: nodeIdInputSchema,
     horizontal: v.optional(
       v.pipe(
         v.picklist(['MIN', 'CENTER', 'MAX', 'STRETCH', 'SCALE']),
@@ -142,7 +140,7 @@ export const setLayoutChild = defineTool({
   description:
     'Configure auto-layout child: sizing (FIXED/HUG/FILL), grow, alignment, absolute positioning.',
   execution: { kind: 'sync', mutation: 'properties' },
-  input: v.object({
+  input: v.strictObject({
     id: v.pipe(v.string(), v.description('Child node ID')),
     sizing_horizontal: v.optional(
       v.pipe(v.picklist(['FIXED', 'HUG', 'FILL']), v.description('Horizontal sizing mode'))

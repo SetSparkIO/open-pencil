@@ -1,60 +1,50 @@
 import { tool } from 'ai'
+import { isPlainObject } from 'es-toolkit'
 
-import { graphFromPageSnapshot } from '@open-pencil/core/editor'
-import type { FigmaAPI } from '@open-pencil/core/figma-api'
+import { graphFromPageSnapshot } from '@open-pencil/core'
+import { registerComponentCatalog, isAtomicTool, toolsToAI } from '@open-pencil/core/tools'
+
 import {
-  registerComponentCatalog,
-  isAtomicTool,
-  toolChangesDocument,
-  toolsToAI,
-  type ToolDef
-} from '@open-pencil/core/tools'
-
+  currentRun,
+  markRunWork,
+  runBaseline,
+  runPageId,
+  stepBudget,
+  takeRunUndoNote
+} from '@/app/ai/reply/run'
 import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
-import { executeAtomicEditorTool } from '@/app/automation/execution/editor'
 import { recordToolCompleted, type AIDiagnosticContext } from '@/app/diagnostics/events/ai'
 import type { EditorStore } from '@/app/editor/active-store'
-import { ensureGraphFonts } from '@/app/editor/fonts'
 import { useLibraryService } from '@/app/libraries'
 
 import { aiToolDefinitions } from './catalog'
-import { recordToolChange } from './changes/capture'
-import { createMutex } from './mutex'
-import {
-  markRunWork,
-  moveRunToPage,
-  recordRunBaseline,
-  runBaseline,
-  runPageId,
-  stepBudget
-} from './run'
+import { runEditorTool } from './runner'
 
-export { didHitStepLimit, endRun, recordStep, runAgentId, runPageId, startRun } from './run'
+export {
+  currentRun,
+  didHitStepLimit,
+  endRun,
+  markRunPreview,
+  recordStep,
+  runAgentId,
+  runPageId,
+  runUndoEntries,
+  startRun
+} from '@/app/ai/reply/run'
+
+/**
+ * A result with the run's note about edits the user undid meanwhile, so the model does not
+ * build on them; other results stay as they are.
+ */
+function withUndoNote(result: unknown, note: string): unknown {
+  if (!note) return result
+  return isPlainObject(result) ? { ...result, undoNote: note } : { result, undoNote: note }
+}
 
 export function createAITools(store: EditorStore, diagnosticContext?: AIDiagnosticContext) {
-  const acquireMutation = createMutex()
   const libraryService = useLibraryService()
   libraryService.bindEditor(store)
   registerComponentCatalog(store.graph, libraryService)
-
-  async function runTool(
-    def: ToolDef,
-    figma: FigmaAPI,
-    args: Record<string, unknown>,
-    pageId: string
-  ): Promise<unknown> {
-    if (isAtomicTool(def)) {
-      return executeAtomicEditorTool(store, figma, def, args, { label: 'AI' })
-    }
-    return store.runMutationWithLayout(
-      () => def.execute(figma, args),
-      pageId,
-      async () => {
-        const pageNode = store.graph.getNode(pageId)
-        if (pageNode) await ensureGraphFonts(store.graph, pageNode.childIds, store.renderer)
-      }
-    )
-  }
 
   return toolsToAI(
     aiToolDefinitions,
@@ -67,42 +57,18 @@ export function createAITools(store: EditorStore, diagnosticContext?: AIDiagnost
         }
         return figma
       },
-      executeTool: async (def, figma, args, { toolCallId }) => {
-        const pageId = figma.currentPageId
-        if (!def.mutates) return def.execute(figma, args)
-        // A step's calls may run concurrently; whole-page snapshots must not interleave.
-        const release = await acquireMutation()
-        const before = store.snapshotPage(pageId)
-        if (toolChangesDocument(def)) recordRunBaseline(store, before)
-        try {
-          return await runTool(def, figma, args, pageId)
-        } finally {
-          const after = store.snapshotPage(pageId)
-          // Atomic tools record their own undo entry.
-          if (!isAtomicTool(def)) {
-            store.pushUndoEntry({
-              label: `AI: ${def.name}`,
-              forward: () => store.restorePageFromSnapshot(after),
-              inverse: () => store.restorePageFromSnapshot(before)
-            })
-          }
-          // View tools (selection, viewport, pages) cannot change the document.
-          if (toolChangesDocument(def)) {
-            try {
-              recordToolChange(store, toolCallId, before, after)
-            } catch (error) {
-              // The change record is a review aid; the edit and its undo entry already stand.
-              console.warn('Could not record AI tool change', error)
-            }
-          }
-          try {
-            // `switch_page` moves the run, and the user's view with it.
-            if (figma.currentPageId !== pageId) await moveRunToPage(store, figma.currentPageId)
-          } finally {
-            release()
-          }
-        }
-      },
+      executeTool: async (def, figma, args, { toolCallId }) =>
+        withUndoNote(
+          // The call belongs to the reply that made it, even if a later one starts meanwhile.
+          await runEditorTool({
+            store,
+            figma,
+            def,
+            args,
+            reply: { run: currentRun(store), toolCallId }
+          }),
+          takeRunUndoNote(store)
+        ),
       onAfterExecute: (def) => {
         if (def.mutates && !isAtomicTool(def)) store.requestRender()
       },

@@ -46,6 +46,12 @@
       "@open-pencil/harness": [
         "./packages/harness/src/index.ts"
       ],
+      "#feedback/*": [
+        "./packages/feedback/src/*"
+      ],
+      "@open-pencil/cloud/*": [
+        "./packages/cloud/src/*"
+      ],
       "#dom-css/*": [
         "./packages/dom-css/src/*"
       ],
@@ -64,6 +70,9 @@
       "@open-pencil/vue": [
         "./packages/vue/src/index.ts"
       ],
+      "@open-pencil/vue/*": [
+        "./packages/vue/src/*"
+      ],
       "@open-pencil/core": [
         "./packages/core/src/index.ts"
       ],
@@ -73,6 +82,15 @@
       "@open-pencil/dom-css": [
         "./packages/dom-css/src/index.ts"
       ],
+      "@open-pencil/dom-css/scene-graph": [
+        "./packages/dom-css/src/import/scene-graph.ts"
+      ],
+      "@open-pencil/dom-css/export": [
+        "./packages/dom-css/src/export/index.ts"
+      ],
+      "@open-pencil/dom-css/*": [
+        "./packages/dom-css/src/*"
+      ],
       "#scene-graph/*": [
         "./packages/scene-graph/src/*"
       ],
@@ -81,6 +99,12 @@
       ],
       "@open-pencil/scene-graph/*": [
         "./packages/scene-graph/src/*"
+      ],
+      "#drawio/*": [
+        "./packages/drawio/src/*"
+      ],
+      "@open-pencil/drawio": [
+        "./packages/drawio/src/index.ts"
       ],
       "#emit/*": [
         "./packages/emit/src/*"
@@ -105,6 +129,12 @@
       ],
       "#cli-tests/*": [
         "./packages/cli/tests/*"
+      ],
+      "#cloud/*": [
+        "./packages/cloud/src/*"
+      ],
+      "#cloud-tests/*": [
+        "./packages/cloud/tests/*"
       ]
     },
     "types": [
@@ -121,9 +151,11 @@
     "packages/design-jsx/src/global.d.ts",
     "tests/**/*.ts",
     "packages/*/tests/**/*.ts",
+    "packages/*/tests/**/*.tsx",
     "tests/helpers/tauri/native-global.d.ts"
   ],
   "exclude": [
-    "tests/e2e/native/**"
+    "tests/e2e/native/**",
+    "packages/feedback/**"
   ]
 }

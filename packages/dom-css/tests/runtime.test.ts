@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 
-import {
-  createCSSRuntime,
-  createHeadlessCSSRuntime,
-  exportHTMLBundle,
-  serializeHTML
-} from '../src/index'
+import { exportHTMLBundle } from '#dom-css/export/bundle'
+import { serializeHTML } from '#dom-css/export/html'
+
+import { createCSSRuntime, createHeadlessCSSRuntime } from '../src/index'
 import { cardDocument, TEST_COLORS } from './helpers'
 
 describe('@open-pencil/dom-css runtime', () => {
@@ -108,6 +106,46 @@ describe('@open-pencil/dom-css runtime', () => {
       "url('data:image/svg+xml;utf8,<svg></svg>')"
     )
     expect(section.inlineStyle?.width).toBe('320px')
+  })
+
+  it('applies the universal selector below any tag or class', async () => {
+    const runtime = createHeadlessCSSRuntime()
+    const parsed = runtime.parseHTML('<div class="card"><p>Text</p></div>')
+    const document = await runtime.computeStyles(
+      parsed,
+      `*, ::before, ::after { box-sizing: border-box; margin: 0; }
+       p { margin: 4px; }`
+    )
+    const card = document.children[0]
+    expect(card?.type).toBe('element')
+    if (card?.type !== 'element') return
+    expect(card.computedStyle?.['box-sizing']).toBe('border-box')
+    const text = card.children.find((child) => child.type === 'element')
+    expect(text?.type === 'element' ? text.computedStyle?.margin : undefined).toBe('4px')
+  })
+
+  it('lets the later declaration of a side win, whether it is logical or physical', async () => {
+    const runtime = createHeadlessCSSRuntime()
+    const parsed = runtime.parseHTML('<div class="a">A</div><div class="b">B</div>')
+    const document = await runtime.computeStyles(
+      parsed,
+      `.a { padding-left: 4px; padding-inline: 12px; }
+       .b { padding: 8px; padding-left: 2px; }`
+    )
+    const [a, b] = document.children
+    expect(a?.type === 'element' ? a.computedStyle?.['padding-left'] : undefined).toBe('12px')
+    expect(b?.type === 'element' ? b.computedStyle?.['padding-left'] : undefined).toBe('2px')
+  })
+
+  it('scores *.card like .card, so the later rule wins', async () => {
+    const runtime = createHeadlessCSSRuntime()
+    const parsed = runtime.parseHTML('<div class="card">A</div>')
+    const document = await runtime.computeStyles(
+      parsed,
+      '*.card { color: #0000ff; } .card { color: #ff0000; }'
+    )
+    const card = document.children[0]
+    expect(card?.type === 'element' ? card.computedStyle?.color : undefined).toBe('#ff0000')
   })
 
   it('computes selector specificity, inheritance, and shorthands', async () => {

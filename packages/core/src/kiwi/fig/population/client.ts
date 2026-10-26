@@ -1,16 +1,25 @@
 import type { SceneGraph } from '@open-pencil/scene-graph'
 import { randomHex } from '@open-pencil/scene-graph/random'
 
+import { releaseFigArchive } from '#core/kiwi/fig/session/archive/access'
+import { archiveChanges, trackArchiveChanges } from '#core/kiwi/fig/session/archive/changes'
 import { updateReaderRecovery, releaseReaderRecovery } from '#core/kiwi/fig/session/document-state'
 import type { FigSessionResponse } from '#core/kiwi/fig/session/protocol'
 
 import { applyFigPopulationDelta } from './delta'
 
-/** The two responses this client acts on, taken from the session protocol itself. */
-type WorkerResult = Extract<FigSessionResponse, { type: 'population-result' | 'population-error' }>
+/** The responses this client acts on, taken from the session protocol itself. */
+type WorkerResult = Extract<
+  FigSessionResponse,
+  { type: 'population-result' | 'population-error' | 'population-progress' }
+>
 
 const MAX_FIG_POPULATION_WORKER_NODES = 200_000
-const FIG_POPULATION_WORKER_TIMEOUT_MS = 30_000
+/**
+ * How long a page load may go without reporting progress before the worker counts as stuck. A
+ * large page legitimately takes longer than this; it reports progress as it goes.
+ */
+const FIG_POPULATION_WORKER_STALL_MS = 30_000
 const populationWorkers = new WeakMap<SceneGraph, FigPopulationWorker>()
 interface OriginalArchiveRequest {
   request: () => Promise<Uint8Array>
@@ -37,7 +46,8 @@ function emitTelemetry(detail: FigPopulationWorkerTelemetry): void {
 export function registerFigPopulationWorker(
   graph: SceneGraph,
   worker: Worker,
-  port?: MessagePort
+  port?: MessagePort,
+  stopWorker?: () => void
 ): void {
   if (graph.nodes.size > MAX_FIG_POPULATION_WORKER_NODES) {
     emitTelemetry({ event: 'fallback', reason: 'oversized' })
@@ -45,10 +55,10 @@ export function registerFigPopulationWorker(
       worker.terminate()
       return
     }
-    populationWorkers.set(graph, createDisposalOnlyWorker(worker, port))
+    populationWorkers.set(graph, createRetiredWorker(worker, port, !!stopWorker))
     return
   }
-  const client = createPopulationWorkerClient(graph, worker, port)
+  const client = createPopulationWorkerClient(graph, worker, port, stopWorker)
   populationWorkers.set(graph, client)
   emitTelemetry({ event: 'registered' })
 }
@@ -62,8 +72,9 @@ export function registerOriginalArchiveRequest(
   request: () => Promise<Uint8Array>
 ): void {
   const entry: OriginalArchiveRequest = { request, valid: true, unbind: () => undefined }
+  // Layout and the layers a page loads from this archive leave it describing the document.
   const invalidate = () => {
-    if (!graph.isApplyingLayout) entry.valid = false
+    if (!graph.isApplyingLayout && !graph.isApplyingImportedState) entry.valid = false
   }
   entry.unbind = graph.onNodeEvents({
     created: invalidate,
@@ -73,11 +84,21 @@ export function registerOriginalArchiveRequest(
     reordered: invalidate
   })
   originalArchiveRequests.set(graph, entry)
+  trackArchiveChanges(graph)
+}
+
+/** Variables and document settings change without layer events. */
+function divergedOutsideLayers(graph: SceneGraph): boolean {
+  const changes = archiveChanges(graph)
+  return (
+    !!changes &&
+    (changes.changedVariables.size > 0 || changes.collectionsChanged || changes.documentChanged)
+  )
 }
 
 export async function requestOriginalArchive(graph: SceneGraph): Promise<Uint8Array | null> {
   const entry = originalArchiveRequests.get(graph)
-  if (!entry?.valid) return null
+  if (!entry?.valid || divergedOutsideLayers(graph)) return null
   const archive = await entry.request()
   return originalArchiveRequests.get(graph)?.valid === true &&
     originalArchiveRequests.get(graph) === entry
@@ -91,19 +112,30 @@ export function releaseFigPopulationWorker(graph: SceneGraph): void {
   populationWorkers.delete(graph)
   originalArchiveRequests.get(graph)?.unbind()
   originalArchiveRequests.delete(graph)
+  releaseFigArchive(graph)
 }
 
 export interface FigPopulationWorker {
   populate: (pageId: string, signal?: AbortSignal) => Promise<boolean | null>
+  /**
+   * Stop loading pages through the worker. The worker itself keeps serving the document's
+   * archive until the document closes, which releases it with the archive.
+   */
   terminate: () => void
 }
 
-function createDisposalOnlyWorker(worker: Worker, port: MessagePort): FigPopulationWorker {
+/** A worker too large to load pages through; one nothing else holds is disposed with it. */
+function createRetiredWorker(
+  worker: Worker,
+  port: MessagePort,
+  sharedWorker: boolean
+): FigPopulationWorker {
+  if (sharedWorker) port.postMessage({ type: 'retire' })
   let disposed = false
   return {
     populate: () => Promise.resolve(null),
     terminate() {
-      if (disposed) return
+      if (disposed || sharedWorker) return
       disposed = true
       emitTelemetry({ event: 'terminated' })
       port.postMessage({ type: 'dispose' })
@@ -118,11 +150,19 @@ export function createFigPopulationWorker(graph: SceneGraph): FigPopulationWorke
   return populationWorkers.get(graph) ?? null
 }
 
+/**
+ * The client owns the worker unless `stopWorker` is given: a document whose archive the worker
+ * also holds passes the archive's, so that retiring page loading leaves the worker serving it
+ * and stopping the worker lets the archive carry on without it.
+ */
 export function createPopulationWorkerClient(
   graph: SceneGraph,
   worker: Pick<Worker, 'postMessage' | 'terminate' | 'onerror' | 'onmessage'>,
-  port?: Pick<MessagePort, 'postMessage' | 'start' | 'close' | 'onmessage'>
+  port?: Pick<MessagePort, 'postMessage' | 'start' | 'close' | 'onmessage'>,
+  stopWorker?: () => void
 ): FigPopulationWorker {
+  const sharedWorker = !!stopWorker
+  const stopWorkerNow = stopWorker ?? (() => worker.terminate())
   const pending = new Map<
     string,
     {
@@ -137,6 +177,15 @@ export function createPopulationWorkerClient(
   let stale = false
   let disposed = false
   let applyingDelta = false
+  /** Answer every load in flight with null, so its page loads on the main thread instead. */
+  const settlePending = () => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timeout)
+      request.abort?.()
+      request.resolve(null)
+    }
+    pending.clear()
+  }
   const invalidate = () => {
     // Layout recomputation (import-time or after a switch) is derived from the
     // same scene graph the worker deltas were built from; it must not count as
@@ -145,23 +194,25 @@ export function createPopulationWorkerClient(
     revision++
     stale = true
     emitTelemetry({ event: 'stale', reason: 'graph-mutation' })
+    // A load in flight can no longer apply, however long the worker keeps reporting progress.
+    settlePending()
   }
   let unbind: (() => void) | undefined
   const releaseSubscription = () => {
     unbind?.()
     unbind = undefined
   }
-  const fail = (emit = true) => {
+  /**
+   * Stop loading pages here. A graph that diverged only retires the worker's session, so the
+   * worker keeps serving the archive; an abandoned or failed load stops the worker itself.
+   */
+  const fail = (emit = true, stop = true) => {
     stale = true
     if (emit) emitTelemetry({ event: 'fallback', reason: 'worker-error' })
-    for (const request of pending.values()) {
-      clearTimeout(request.timeout)
-      request.abort?.()
-      request.resolve(null)
-    }
-    pending.clear()
+    settlePending()
     releaseSubscription()
-    worker.terminate()
+    if (stop || !sharedWorker) stopWorkerNow()
+    else port?.postMessage({ type: 'retire' })
     populationWorkers.delete(graph)
   }
   unbind = graph.onNodeEvents({
@@ -171,8 +222,16 @@ export function createPopulationWorkerClient(
     reparented: invalidate,
     reordered: invalidate
   })
+  const watchForStall = () => setTimeout(() => fail(), FIG_POPULATION_WORKER_STALL_MS)
   const receive = (result: WorkerResult) => {
-    if (result.type === 'population-error') return fail()
+    if (result.type === 'population-error') return fail(true, false)
+    if (result.type === 'population-progress') {
+      const request = pending.get(result.requestId)
+      if (!request) return
+      clearTimeout(request.timeout)
+      request.timeout = watchForStall()
+      return
+    }
     const request = pending.get(result.requestId)
     if (!request) return
     clearTimeout(request.timeout)
@@ -227,13 +286,12 @@ export function createPopulationWorkerClient(
           reject(new DOMException('Aborted', 'AbortError'))
         }
         signal?.addEventListener('abort', abort, { once: true })
-        const timeout = setTimeout(() => fail(), FIG_POPULATION_WORKER_TIMEOUT_MS)
         pending.set(requestId, {
           resolve,
           abort: () => signal?.removeEventListener('abort', abort),
           revision: baseRevision,
           startedAt: performance.now(),
-          timeout
+          timeout: watchForStall()
         })
         if (port) port.postMessage({ type: 'populate', requestId, baseRevision, pageId })
         else worker.postMessage({ type: 'populate', requestId, baseRevision, pageId }, [])
@@ -243,9 +301,11 @@ export function createPopulationWorkerClient(
       if (disposed) return
       disposed = true
       emitTelemetry({ event: 'terminated' })
-      port?.postMessage({ type: 'dispose' })
-      port?.close()
-      fail(false)
+      if (!sharedWorker) {
+        port?.postMessage({ type: 'dispose' })
+        port?.close()
+      }
+      fail(false, false)
     }
   }
 }

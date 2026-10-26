@@ -1,17 +1,19 @@
-import { beforeAll, afterAll, describe, expect, test, spyOn, setDefaultTimeout } from 'bun:test'
-
-import { unzipSync } from 'fflate'
+import { beforeAll, afterAll, expect, test, spyOn, setDefaultTimeout } from 'bun:test'
 
 import {
-  exportFigFile,
-  initCodec,
-  isZstdCompressed,
-  parseFigFile,
-  parseFigKiwiChunks,
-  type SceneGraph,
-  type SceneNode
-} from '@open-pencil/core'
+  expectSaveLoadedOnlyInternalPages,
+  snapshotNodes
+} from '#core-tests/helpers/fig/save-contract'
+import { heavy } from '#core-tests/helpers/test-utils'
+import { unzipSync } from 'fflate'
+
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { isZstdCompressed } from '@open-pencil/kiwi/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { parseFigKiwiChunks } from '@open-pencil/kiwi/fig/container'
+import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 import type { JSONObject } from '@open-pencil/scene-graph/primitives'
+import { imageSize } from '@open-pencil/scene-graph/images'
 
 import {
   type Mismatch,
@@ -55,11 +57,6 @@ const SPECS: FixtureSpec[] = [
     figKiwiVersion: 101
   }
 ]
-
-function pngDimensions(png: Uint8Array): { w: number; h: number } {
-  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength)
-  return { w: dv.getUint32(16), h: dv.getUint32(20) }
-}
 
 function buildPathMap(graph: SceneGraph): Map<string, SceneNode> {
   const map = new Map<string, SceneNode>()
@@ -406,7 +403,7 @@ function deepCompareRaw(
 function verifyFixture(spec: FixtureSpec): void {
   const name = (spec.file.split('/').pop() ?? '').replace('.fig', '')
 
-  describe(`roundtrip: ${name}`, () => {
+  heavy(`roundtrip: ${name}`, () => {
     let g0!: Map<string, SceneNode>
     let g0Graph!: SceneGraph
     let g0Bytes!: ArrayBuffer
@@ -475,9 +472,7 @@ function verifyFixture(spec: FixtureSpec): void {
       await g0Ready
       const thumb = g0Zip['thumbnail.png']
       expect(thumb.byteLength).toBe(spec.thumbnailSize)
-      const { w, h } = pngDimensions(thumb)
-      expect(w).toBe(spec.thumbnailWidth)
-      expect(h).toBe(spec.thumbnailHeight)
+      expect(imageSize(thumb)).toEqual({ width: spec.thumbnailWidth, height: spec.thumbnailHeight })
     })
 
     test('original fig-kiwi container', async () => {
@@ -536,16 +531,16 @@ function verifyFixture(spec: FixtureSpec): void {
       expect(g2Export).toEqual(g1Export)
     })
 
-    test('edited export re-encodes the document without mutating unloaded source pages', async () => {
+    test('edited export re-encodes the document without loading unloaded visible pages', async () => {
       await g0Ready
       const edited = await parseFigFile(g0Bytes.slice(0), { populate: 'first-page' })
       const page = edited.getPages()[0]
       const name = `${page.name} (edited)`
       edited.updateNode(page.id, { name })
-      const before = structuredClone([...edited.nodes])
+      const before = snapshotNodes(edited)
       const bytes = await exportFigFile(edited)
       expect(bytes).not.toEqual(new Uint8Array(g0Bytes))
-      expect([...edited.nodes]).toEqual(before)
+      expectSaveLoadedOnlyInternalPages(edited, before)
       const reopened = await parseFigFile(bytes.slice().buffer as ArrayBuffer)
       expect(reopened.getPages()[0].name).toBe(name)
       expect(reopened.figSchemaDeflated).toEqual(edited.figSchemaDeflated)

@@ -1,12 +1,13 @@
 import { expect, test } from 'bun:test'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { inertPopulationWorker } from '#core-tests/helpers/fig/population-worker'
+
+import { createEditor } from '@open-pencil/core'
 
 import {
   registerFigPopulationWorker,
   releaseFigPopulationWorker
 } from '#core/kiwi/fig/population/client'
-import { inertPopulationWorker } from '#core-tests/helpers/fig/population-worker'
 
 test('new live pages do not require unavailable reader recovery', async () => {
   const editor = createEditor()

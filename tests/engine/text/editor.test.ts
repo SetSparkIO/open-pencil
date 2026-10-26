@@ -1,9 +1,12 @@
 import { describe, test, expect } from 'bun:test'
 
-import type { CanvasKit, Paragraph, RectWithDirection } from 'canvaskit-wasm'
+import type { CanvasKit, LineMetrics, Paragraph, RectWithDirection } from 'canvaskit-wasm'
 
-import { TextEditor, type SceneNode } from '@open-pencil/core'
+import { TextEditor } from '@open-pencil/core/text'
+import type { SceneNode } from '@open-pencil/scene-graph'
 import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
+
+import { TextLayout } from '#core/canvas/text/layout'
 
 import { expectDefined } from '#tests/helpers/assert'
 import { asDouble } from '#tests/helpers/doubles'
@@ -12,6 +15,19 @@ const mockCk = asDouble<CanvasKit>({
   RectHeightStyle: { Max: 0 },
   RectWidthStyle: { Tight: 0 }
 })
+
+/** A layout of one native paragraph double holding `length` characters. */
+function layoutOf(native: Partial<Paragraph>, length: number): TextLayout {
+  const paragraph = asDouble<Paragraph>({
+    layout: () => undefined,
+    didExceedMaxLines: () => false,
+    getLongestLine: () => 0,
+    ...native
+  })
+  const layout = TextLayout.ofParagraph(mockCk, paragraph, length)
+  layout.layout(100)
+  return layout
+}
 
 function createEditor(text = 'Hello World') {
   const editor = new TextEditor(mockCk)
@@ -33,20 +49,23 @@ function createParagraphEditor(textAlignVertical: SceneNode['textAlignVertical']
     left: 3,
     startIndex: 0
   }
-  const paragraph = asDouble<Paragraph>({
-    delete: () => undefined,
-    getGlyphPositionAtCoordinate: (_x: number, y: number) => {
-      hitTestYs.push(y)
-      return { pos: Math.round(y) }
-    },
-    getHeight: () => 20,
-    getLineMetrics: () => [lineMetrics],
-    getLineMetricsAt: () => lineMetrics,
-    getLineNumberAt: () => 0,
-    getRectsForRange: () => rects
-  })
   const renderer = asDouble<Parameters<TextEditor['setRenderer']>[0]>({
-    buildParagraph: () => paragraph,
+    buildParagraph: (node: SceneNode) =>
+      layoutOf(
+        {
+          delete: () => undefined,
+          getGlyphPositionAtCoordinate: (_x: number, y: number) => {
+            hitTestYs.push(y)
+            return asDouble({ pos: Math.round(y) })
+          },
+          getHeight: () => 20,
+          getLineMetrics: () => [asDouble(lineMetrics)],
+          getGlyphInfoAt: () => null,
+          getLineNumberAt: () => 0,
+          getRectsForRange: () => rects
+        },
+        node.text.length
+      ),
     fontGeneration: 1
   })
   const editor = new TextEditor(mockCk)
@@ -189,6 +208,67 @@ describe('TextEditor', () => {
     }
   })
 
+  test('places the caret of empty text, which CanvasKit lays out no line for', () => {
+    const empty = {
+      delete: () => undefined,
+      getHeight: () => 0,
+      getLineMetrics: () => []
+    }
+    const space = {
+      delete: () => undefined,
+      getHeight: () => 17,
+      getLineMetrics: () => [asDouble<LineMetrics>({ height: 17, left: 0 })]
+    }
+    const editor = new TextEditor(mockCk)
+    editor.setRenderer(
+      asDouble<Parameters<TextEditor['setRenderer']>[0]>({
+        buildParagraph: (node: SceneNode) =>
+          node.text === '' ? layoutOf(empty, 0) : layoutOf(space, 1),
+        fontGeneration: 1
+      })
+    )
+    editor.start(
+      createDefaultNode(() => 'new-text', 'TEXT', {
+        text: '',
+        width: 120,
+        height: 57,
+        textAlignHorizontal: 'CENTER',
+        textAlignVertical: 'BOTTOM'
+      })
+    )
+    expect(editor.getCaretRect()).toEqual({ x: 60, y0: 40, y1: 57 })
+  })
+
+  test('lays the text out again when its node changes outside the editor', () => {
+    const built: number[] = []
+    const editor = new TextEditor(mockCk)
+    editor.setRenderer(
+      asDouble<Parameters<TextEditor['setRenderer']>[0]>({
+        buildParagraph: (node: SceneNode) => {
+          built.push(node.paragraphSpacing)
+          return layoutOf(
+            {
+              delete: () => undefined,
+              getHeight: () => 20,
+              getLineMetrics: () => [],
+              getRectsForRange: () => []
+            },
+            node.text.length
+          )
+        },
+        fontGeneration: 1
+      })
+    )
+    const node = createDefaultNode(() => 'spaced-text', 'TEXT', { text: 'A\nB' })
+    editor.start(node)
+    editor.invalidateParagraph({ ...node, paragraphSpacing: 12 })
+    expect(built).toEqual([0])
+    // A panel field previews a value: the selection drawn next follows it.
+    editor.getSelectionRects()
+    editor.getSelectionRects()
+    expect(built).toEqual([0, 12])
+  })
+
   test('offsets the empty-text caret for vertical alignment', () => {
     const { editor } = createParagraphEditor('BOTTOM')
     editorState(editor).text = ''
@@ -201,6 +281,51 @@ describe('TextEditor', () => {
     const { editor } = createEditor()
     editor.moveLeft()
     expect(editor.state?.cursor).toBe(10)
+  })
+
+  /** An emoji is one character to the caret, whether a surrogate pair or a joined sequence. */
+  test('moves over, and deletes, an emoji whole', () => {
+    const family = '👨‍👩‍👧'
+    const { editor, node } = createEditor(`a😀${family}b`)
+    const state = editorState(editor)
+    state.cursor = 1
+    editor.moveRight()
+    expect(state.cursor).toBe(3)
+    editor.moveRight()
+    expect(state.cursor).toBe(3 + family.length)
+    editor.moveLeft()
+    expect(state.cursor).toBe(3)
+    editor.backspace(node)
+    expect(state.text).toBe(`a${family}b`)
+    expect(state.cursor).toBe(1)
+    editor.delete(node)
+    expect(state.text).toBe('ab')
+  })
+
+  /** CanvasKit gives no box for half a character, so the caret beside one takes its cluster's. */
+  test('places the caret beside an emoji at the edge of its whole cluster', () => {
+    const ranges: Array<[number, number]> = []
+    const layout = layoutOf(
+      {
+        getGlyphInfoAt: (index: number) =>
+          index >= 1 && index < 3
+            ? asDouble({ graphemeClusterTextRange: { start: 1, end: 3 } })
+            : null,
+        getHeight: () => 12,
+        getLineMetrics: () => [
+          asDouble<LineMetrics>({ baseline: 10, ascent: 8, height: 12, left: 0 })
+        ],
+        getRectsForRange: (start: number, end: number) => {
+          ranges.push([start, end])
+          return start === 1 && end === 3
+            ? [asDouble<RectWithDirection>({ rect: [10, 0, 34, 12] })]
+            : []
+        }
+      },
+      4
+    )
+    expect(layout.getCaretRect(1, false)?.x).toBe(10)
+    expect(ranges).toEqual([[1, 3]])
   })
 
   test('moveRight at end stays', () => {

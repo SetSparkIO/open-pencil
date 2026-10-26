@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { readReloadSource } from '@/app/document/io/reload-source'
-import { chooseTauriFigSavePath } from '@/app/document/io/save-targets'
+import { chooseTauriFigSavePath } from '@/app/document/io/save/targets'
 import { createDocumentWriter } from '@/app/document/io/write'
 
 import { clearTauriMocks, mockTauriIPC } from '#tests/helpers/tauri/mocks'
@@ -37,7 +37,7 @@ describe('Tauri document IO helpers', () => {
     })
     const savedVersions: number[] = []
     const write = createDocumentWriter({
-      state: { sceneVersion: 42 } as Parameters<typeof createDocumentWriter>[0]['state'],
+      state: { documentName: 'Document' },
       getFilePath: () => '/tmp/document.fig',
       getFileHandle: () => null,
       getStorageBinding: () => null,
@@ -45,7 +45,7 @@ describe('Tauri document IO helpers', () => {
       setLastWriteTime: () => undefined
     })
 
-    await write(new Uint8Array([1, 2, 3]))
+    await write(new Uint8Array([1, 2, 3]), 42)
 
     expect(calls).toHaveLength(1)
     expect(calls[0]?.cmd).toBe('plugin:fs|write_file')
@@ -60,7 +60,7 @@ describe('Tauri document IO helpers', () => {
     await mockTauriIPC(() => null)
     const savedVersions: number[] = []
     const write = createDocumentWriter({
-      state: { sceneVersion: 42 } as Parameters<typeof createDocumentWriter>[0]['state'],
+      state: { documentName: 'Document' },
       getFilePath: () => '/tmp/document.fig',
       getFileHandle: () => null,
       getStorageBinding: () => null,

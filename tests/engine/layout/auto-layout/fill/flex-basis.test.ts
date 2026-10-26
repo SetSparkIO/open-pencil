@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { computeLayout, SceneGraph } from '@open-pencil/core'
+import { computeLayout } from '@open-pencil/core/layout'
+import { SceneGraph } from '@open-pencil/scene-graph'
 
 import { autoFrame, pageId, rect } from '#tests/helpers/layout'
 
@@ -45,20 +46,17 @@ describe('FILL flexBasis', () => {
       itemSpacing: 0
     })
     autoFrame(graph, frame.id, {
-      primaryAxisSizing: 'FILL' as const,
-      counterAxisSizing: 'FIXED',
+      layoutGrow: 1,
       width: 50,
       height: 100
     })
     autoFrame(graph, frame.id, {
-      primaryAxisSizing: 'FILL' as const,
-      counterAxisSizing: 'FIXED',
+      layoutGrow: 1,
       width: 50,
       height: 100
     })
     autoFrame(graph, frame.id, {
-      primaryAxisSizing: 'FILL' as const,
-      counterAxisSizing: 'FIXED',
+      layoutGrow: 1,
       width: 50,
       height: 100
     })

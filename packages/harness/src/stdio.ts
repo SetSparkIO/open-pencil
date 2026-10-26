@@ -13,6 +13,14 @@ import { HarnessSessionService } from '#harness/service'
 import { FileResumeStateStore } from '#harness/session-store'
 import { loadTypeScriptDependencies } from '#harness/typescript-dependencies'
 
+import packageJSON from '../package.json' with { type: 'json' }
+
+// The app reads this to check that the companion matches it, before anything else starts.
+if (process.argv.includes('--version')) {
+  process.stdout.write(`${packageJSON.version}\n`)
+  process.exit(0)
+}
+
 const writeProtocol = reserveProtocolOutput()
 loadTypeScriptDependencies()
 
@@ -66,10 +74,17 @@ async function dispatch(line: string): Promise<boolean> {
       return true
     }
     if (request.method === 'session.turn') {
-      for await (const event of service.runTurn(request.params.sessionId, request.params.prompt)) {
+      const { sessionId, prompt } = request.params
+      for await (const event of service.runTurn(sessionId, prompt)) {
         await emit({ type: 'turn.event', id: request.id, event })
       }
-      await emit({ type: 'response', id: request.id, result: { completed: true } })
+      // A cancelled turn ends its stream quietly; its answer says it was cancelled.
+      const cancelled = service.lastTurnCancelled(sessionId)
+      await emit({
+        type: 'response',
+        id: request.id,
+        result: cancelled ? { cancelled: true } : { completed: true }
+      })
       return true
     }
     if (request.method === 'session.cancel') {

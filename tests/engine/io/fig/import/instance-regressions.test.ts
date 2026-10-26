@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
 
-import { computeAllLayouts, parseFigFile, type SceneGraph, type SceneNode } from '@open-pencil/core'
+import { parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { computeAllLayouts } from '@open-pencil/core/layout'
+import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 
 import { computeContentBounds } from '#core/io/formats/raster/render'
 
@@ -57,14 +59,18 @@ describe('derived instance layout regressions', () => {
     expect(inputFrame?.width).toBeCloseTo(375.7498, 3)
     expect(inputFrame?.height).toBeCloseTo(39.3803, 3)
     expect(content).toMatchObject({ x: 0, y: 0 })
+    expect(content?.width).toBeCloseTo(374.8589782714844, 3)
     // Original Figma capture: gold-input-layout.json. The outer instance scales padding too.
     expect(firstBadge?.x).toBeCloseTo(7.126753330230713, 3)
     expect(firstBadge?.y).toBeCloseTo(5.345065116882324, 3)
     expect(firstBadge?.width).toBeCloseTo(85.3239, 3)
     expect(firstBadge?.height).toBeCloseTo(28.6901, 3)
     expect(firstBadgeContent).toMatchObject({ x: 0, y: 0 })
+    // Figma derived the placeholder at 97.507 × 39.3803, as tall as Content, in the file.
     expect(placeholderFrame?.x).toBeCloseTo(277.352, 3)
-    expect(placeholderFrame?.y).toBeCloseTo(0.0915584564, 3)
+    expect(placeholderFrame?.y).toBeCloseTo(0, 3)
+    expect(placeholderFrame?.width).toBeCloseTo(97.50701141357422, 3)
+    expect(placeholderFrame?.height).toBeCloseTo(39.3802604675293, 3)
     expect(placeholderText?.x).toBeCloseTo(14.2535, 3)
     expect(placeholderText?.y).toBeCloseTo(10.6901, 3)
   })

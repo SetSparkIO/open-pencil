@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue'
 
-import { BindableValueRoot, useI18n, useNumberBindingProvider } from '@open-pencil/vue'
-import type { BindingTarget, NumberBindingPath } from '@open-pencil/vue'
+import {
+  useNumberBindingProvider,
+  type BindingTarget
+} from '@open-pencil/vue/controls/binding-provider'
+import type { NumberBindingPath } from '@open-pencil/vue/controls/number-variable-binding'
+import { useI18n } from '@open-pencil/vue/i18n'
+import { BindableValueRoot } from '@open-pencil/vue/primitives/BindableValue'
 
 import NumberField from '@/components/inputs/NumberField.vue'
 import VariableBindingPicker from '@/components/properties/binding/VariableBindingPicker.vue'
@@ -19,6 +24,7 @@ const {
   sensitivity,
   placeholder,
   nodeId,
+  nodeIds,
   bindingPath,
   bindingPaths
 } = defineProps<{
@@ -32,6 +38,8 @@ const {
   sensitivity?: number
   placeholder?: string
   nodeId: string
+  /** Every layer the field edits, when it is more than `nodeId`; a variable binds to all. */
+  nodeIds?: readonly string[]
   bindingPath: NumberBindingPath
   bindingPaths?: readonly NumberBindingPath[]
 }>()
@@ -46,7 +54,9 @@ const { panels, common } = useI18n()
 const provider = useNumberBindingProvider()
 const attrs = useAttrs()
 const targets = computed<BindingTarget[]>(() =>
-  (bindingPaths ?? [bindingPath]).map((path) => ({ nodeId, path }))
+  (nodeIds ?? [nodeId]).flatMap((id) =>
+    (bindingPaths ?? [bindingPath]).map((path) => ({ nodeId: id, path }))
+  )
 )
 const accessibleLabel = computed(() => {
   const ariaLabel = attrs['aria-label']

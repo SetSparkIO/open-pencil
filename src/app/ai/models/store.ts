@@ -1,3 +1,5 @@
+import { uniq } from 'es-toolkit'
+import * as v from 'valibot'
 import { computed, ref, watch } from 'vue'
 
 import {
@@ -25,17 +27,12 @@ import {
   type AIModelSettings,
   type OptionalAIModelRole,
   type ResolvedAIModelRole,
-  type HarnessPermissionMode,
   type ThinkingLevel
 } from '@/app/ai/models/types'
 
 const LEGACY_CONNECTION_ID = 'connection-default'
 const LEGACY_MODEL_ID: AIModelProfileId = 'model-default'
 const DEFAULT_MAX_OUTPUT_TOKENS = 16_384
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function isProviderID(value: unknown): value is AIProviderID {
   return (
@@ -44,78 +41,82 @@ function isProviderID(value: unknown): value is AIProviderID {
   )
 }
 
-function isAPIType(value: unknown): value is 'completions' | 'responses' {
-  return value === 'completions' || value === 'responses'
-}
+const connectionSchema = v.object({
+  id: v.pipe(v.string(), v.minLength(1)),
+  providerID: v.custom<AIProviderID>(isProviderID),
+  customBaseURL: v.fallback(v.string(), ''),
+  customAPIType: v.fallback(v.picklist(['completions', 'responses']), 'completions'),
+  credentialProfileId: v.pipe(v.string(), v.minLength(1)),
+  cloudWorkspaceId: v.fallback(v.optional(v.string()), undefined)
+})
 
-function isThinkingLevel(value: unknown): value is ThinkingLevel {
-  return typeof value === 'string' && THINKING_LEVELS.includes(value as ThinkingLevel)
-}
+const thinkingLevelSchema = v.picklist(THINKING_LEVELS)
 
 /** Profiles saved before thinking levels kept a Pi level or a free-text provider effort. */
-function parseThinkingLevel(value: Record<string, unknown>): ThinkingLevel {
-  if (isThinkingLevel(value.thinkingLevel)) return value.thinkingLevel
-  if (isThinkingLevel(value.harnessThinkingLevel)) return value.harnessThinkingLevel
-  const effort = stringValue(value.reasoningEffort).trim().toLowerCase()
-  if (effort === 'none') return 'off'
-  if (effort === 'max') return 'xhigh'
-  return isThinkingLevel(effort) ? effort : 'default'
+function migrateThinkingLevel(stored: {
+  thinkingLevel?: unknown
+  harnessThinkingLevel?: unknown
+  reasoningEffort?: unknown
+}): ThinkingLevel {
+  for (const value of [stored.thinkingLevel, stored.harnessThinkingLevel]) {
+    if (v.is(thinkingLevelSchema, value)) return value
+  }
+  const effort = typeof stored.reasoningEffort === 'string' ? stored.reasoningEffort : ''
+  const normalized = effort.trim().toLowerCase()
+  if (normalized === 'none') return 'off'
+  if (normalized === 'max') return 'xhigh'
+  return v.is(thinkingLevelSchema, normalized) ? normalized : 'default'
 }
 
-function isHarnessPermissionMode(value: unknown): value is HarnessPermissionMode {
-  return (
-    typeof value === 'string' && HARNESS_PERMISSION_MODES.includes(value as HarnessPermissionMode)
-  )
-}
-
-function isCapability(value: unknown): value is AIModelCapability {
-  return value === 'tools' || value === 'vision'
-}
-
-function stringValue(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback
-}
+const maxOutputTokensSchema = v.fallback(
+  v.pipe(
+    v.number(),
+    v.finite(),
+    v.transform((tokens) => Math.min(128_000, Math.max(1024, Math.round(tokens))))
+  ),
+  DEFAULT_MAX_OUTPUT_TOKENS
+)
 
 function normalizedMaxOutputTokens(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.min(128_000, Math.max(1024, Math.round(value)))
-    : DEFAULT_MAX_OUTPUT_TOKENS
+  return v.parse(maxOutputTokensSchema, value)
 }
 
+const capabilitySchema = v.picklist(['tools', 'vision'])
+
+const profileSchema = v.object({
+  id: v.custom<AIModelProfileId>((id) => typeof id === 'string' && id.startsWith('model-')),
+  name: v.fallback(v.string(), 'Model'),
+  connectionId: v.string(),
+  modelID: v.fallback(v.string(), ''),
+  customModelID: v.fallback(v.string(), ''),
+  maxOutputTokens: maxOutputTokensSchema,
+  thinkingLevel: v.optional(v.unknown()),
+  harnessThinkingLevel: v.optional(v.unknown()),
+  reasoningEffort: v.optional(v.unknown()),
+  harnessPermissionMode: v.fallback(v.optional(v.picklist(HARNESS_PERMISSION_MODES)), undefined),
+  capabilities: v.fallback(
+    v.pipe(
+      v.array(v.unknown()),
+      v.transform((capabilities) =>
+        uniq(capabilities.filter((capability) => v.is(capabilitySchema, capability)))
+      )
+    ),
+    (): AIModelCapability[] => ['tools']
+  )
+})
+
 function parseConnection(value: unknown): AIModelConnection | null {
-  if (!isRecord(value)) return null
-  const id = stringValue(value.id)
-  const credentialProfileId = stringValue(value.credentialProfileId)
-  if (!id || !credentialProfileId || !isProviderID(value.providerID)) return null
-  return {
-    id,
-    providerID: value.providerID,
-    customBaseURL: stringValue(value.customBaseURL),
-    customAPIType: isAPIType(value.customAPIType) ? value.customAPIType : 'completions',
-    credentialProfileId
-  }
+  const parsed = v.safeParse(connectionSchema, value)
+  return parsed.success ? parsed.output : null
 }
 
 function parseProfile(value: unknown, connectionIds: Set<string>): AIModelProfile | null {
-  if (!isRecord(value)) return null
-  const id = stringValue(value.id)
-  const connectionId = stringValue(value.connectionId)
-  if (!id.startsWith('model-') || !connectionIds.has(connectionId)) return null
-  const capabilities = Array.isArray(value.capabilities)
-    ? value.capabilities.filter(isCapability)
-    : ['tools' as const]
+  const parsed = v.safeParse(profileSchema, value)
+  if (!parsed.success || !connectionIds.has(parsed.output.connectionId)) return null
+  const { harnessThinkingLevel, reasoningEffort, ...profile } = parsed.output
   return {
-    id: id as AIModelProfileId,
-    name: stringValue(value.name, 'Model'),
-    connectionId,
-    modelID: stringValue(value.modelID),
-    customModelID: stringValue(value.customModelID),
-    maxOutputTokens: normalizedMaxOutputTokens(value.maxOutputTokens),
-    thinkingLevel: parseThinkingLevel(value),
-    harnessPermissionMode: isHarnessPermissionMode(value.harnessPermissionMode)
-      ? value.harnessPermissionMode
-      : undefined,
-    capabilities: [...new Set(capabilities)]
+    ...profile,
+    thinkingLevel: migrateThinkingLevel({ ...profile, harnessThinkingLevel, reasoningEffort })
   }
 }
 
@@ -143,27 +144,33 @@ function hydrateCuratedCapabilities(
     const connection = connections.find((candidate) => candidate.id === profile.connectionId)
     if (!connection) continue
     const capabilities = curatedModelCapabilities(connection.providerID, profile.modelID)
-    if (capabilities) profile.capabilities = [...new Set(capabilities)]
+    if (capabilities) profile.capabilities = uniq(capabilities)
   }
 }
 
+const settingsSchema = v.object({
+  version: v.literal(1),
+  connections: v.fallback(v.array(v.unknown()), () => []),
+  models: v.fallback(v.array(v.unknown()), () => []),
+  assignments: v.fallback(v.record(v.string(), v.unknown()), () => ({}))
+})
+
 /** Normalizes persisted settings, migrating fields from earlier versions. */
 export function parseAIModelSettings(value: unknown): AIModelSettings | null {
-  if (!isRecord(value) || value.version !== 1) return null
-  const connections = Array.isArray(value.connections)
-    ? value.connections.map(parseConnection).filter((connection) => connection !== null)
-    : []
+  const stored = v.safeParse(settingsSchema, value)
+  if (!stored.success) return null
+  const connections = stored.output.connections
+    .map(parseConnection)
+    .filter((connection) => connection !== null)
   const connectionIds = new Set(connections.map((connection) => connection.id))
-  const models = Array.isArray(value.models)
-    ? value.models
-        .map((profile) => parseProfile(profile, connectionIds))
-        .filter((profile) => profile !== null)
-    : []
+  const models = stored.output.models
+    .map((profile) => parseProfile(profile, connectionIds))
+    .filter((profile) => profile !== null)
   if (!models.length) return null
   hydrateCuratedCapabilities(models, connections)
   const modelIds = new Set(models.map((profile) => profile.id))
-  const rawAssignments = isRecord(value.assignments) ? value.assignments : {}
-  const rawDesign = stringValue(rawAssignments.design)
+  const rawAssignments = stored.output.assignments
+  const rawDesign = typeof rawAssignments.design === 'string' ? rawAssignments.design : ''
   const design = rawDesign.startsWith('model-') ? (rawDesign as AIModelProfileId) : models[0].id
   const resolvedDesign = modelIds.has(design) ? design : models[0].id
   const assignments: AIModelSettings['assignments'] = {
@@ -295,7 +302,8 @@ function connectionMatchesDraft(
   return (
     connection.providerID === draft.providerID &&
     connection.customBaseURL === draft.customBaseURL.trim() &&
-    connection.customAPIType === draft.customAPIType
+    connection.customAPIType === draft.customAPIType &&
+    (connection.cloudWorkspaceId ?? '') === (draft.cloudWorkspaceId ?? '')
   )
 }
 
@@ -318,7 +326,8 @@ function connectionForDraft(draft: AIModelProfileDraft): AIModelConnection {
     providerID: draft.providerID,
     customBaseURL: draft.customBaseURL.trim(),
     customAPIType: draft.customAPIType,
-    credentialProfileId: id
+    credentialProfileId: id,
+    cloudWorkspaceId: draft.cloudWorkspaceId || undefined
   }
   aiModelSettings.value.connections.push(connection)
   return connection
@@ -337,6 +346,7 @@ function draftForProfile(
     customModelID: profile.customModelID,
     customBaseURL: connection.customBaseURL,
     customAPIType: connection.customAPIType,
+    cloudWorkspaceId: connection.cloudWorkspaceId,
     maxOutputTokens: profile.maxOutputTokens,
     thinkingLevel: profile.thinkingLevel,
     harnessPermissionMode: profile.harnessPermissionMode ?? 'allow-edits',
@@ -356,6 +366,7 @@ function newProfileDraft(connection: AIModelConnection | null): AIModelProfileDr
     customModelID: '',
     customBaseURL: connection?.customBaseURL ?? '',
     customAPIType: connection?.customAPIType ?? 'completions',
+    cloudWorkspaceId: connection?.cloudWorkspaceId,
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     thinkingLevel: 'default',
     harnessPermissionMode: 'allow-edits',
@@ -375,7 +386,12 @@ export function saveModelProfileDraft(draft: AIModelProfileDraft): AIModelProfil
   const provider = AI_PROVIDERS.find((definition) => definition.id === draft.providerID)
   const effectiveModel = draft.customModelID.trim() || draft.modelID.trim()
   if (!draft.name.trim()) throw new Error('Model name is required')
-  if (!draft.providerID.startsWith('acp:') && !effectiveModel) {
+  // Agents choose their own model, and Pi falls back to its own default model.
+  if (
+    !draft.providerID.startsWith('acp:') &&
+    draft.providerID !== 'harness:pi' &&
+    !effectiveModel
+  ) {
     throw new Error('Model ID is required')
   }
   if (
@@ -395,7 +411,7 @@ export function saveModelProfileDraft(draft: AIModelProfileDraft): AIModelProfil
     thinkingLevel: draft.thinkingLevel,
     harnessPermissionMode:
       draft.providerID === 'harness:pi' ? draft.harnessPermissionMode : undefined,
-    capabilities: [...new Set(draft.capabilities)]
+    capabilities: uniq(draft.capabilities)
   }
   const index = aiModelSettings.value.models.findIndex((model) => model.id === profile.id)
   if (index === -1) aiModelSettings.value.models.push(profile)

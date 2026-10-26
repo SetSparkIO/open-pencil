@@ -1,17 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
 import { browserHTMLToSceneGraph } from '#dom-css/browser'
+import { serializeHTML } from '#dom-css/export/html'
+import { sceneGraphToDesignDocument } from '#dom-css/export/projection'
+import { designDocumentToSceneGraph } from '#dom-css/import/scene-graph'
 import type { DesignElement, DesignNode } from '#dom-css/index'
-import {
-  createHeadlessCSSRuntime,
-  designDocumentToSceneGraph,
-  htmlToDesignDocument,
-  htmlToSceneGraph,
-  sceneGraphToDesignDocument,
-  serializeHTML
-} from '#dom-css/index'
+import { createHeadlessCSSRuntime, htmlToDesignDocument, htmlToSceneGraph } from '#dom-css/index'
 
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { pixelLength } from '@open-pencil/scene-graph/text'
 
 import { TEST_COLORS, cardCSS, cardHTML, fixtureCSS, fixtureHTML } from '../helpers'
 
@@ -111,8 +108,8 @@ function expectStyleRoundTripText(graph: SceneGraph, panel: SceneNode) {
   const heading = expectText(graph.getChildren(panel.id)[0])
   expect(heading.fontSize).toBe(18)
   expect(heading.fontWeight).toBe(700)
-  expect(heading.lineHeight).toBe(24)
-  expect(heading.letterSpacing).toBe(0.2)
+  expect(heading.lineHeight).toEqual(pixelLength(24))
+  expect(heading.letterSpacing).toEqual(pixelLength(0.2))
   expect(heading.textAlignHorizontal).toBe('CENTER')
   expect(heading.textCase).toBe('UPPER')
   expect(heading.maxLines).toBe(1)
@@ -191,8 +188,9 @@ describe('@open-pencil/dom-css conversion', () => {
 
     expect(card?.type).toBe('FRAME')
     if (card?.type !== 'FRAME') return
-    expect(card.width).toBe(320)
-    expect(card.height).toBe(180)
+    // CSS sizes the content box: padding and borders come on top.
+    expect(card.width).toBe(320 + 2 * 24 + 2 * 1)
+    expect(card.height).toBe(180 + 2 * 24 + 2 * 1)
     expect(card.layoutMode).toBe('VERTICAL')
     expect(card.itemSpacing).toBe(12)
     expect(card.paddingLeft).toBe(24)
@@ -221,8 +219,8 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(card?.type).toBe('FRAME')
     if (card?.type !== 'FRAME') return
     expect(card.name).toBe('card')
-    expect(card.width).toBe(280)
-    expect(card.height).toBe(140)
+    expect(card.width).toBe(280 + 2 * 20)
+    expect(card.height).toBe(140 + 2 * 20)
     expect(card.itemSpacing).toBe(10)
     expect(card.paddingLeft).toBe(20)
     expect(graph.getChildren(page.id)).toHaveLength(1)
@@ -243,7 +241,7 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(input?.type).toBe('FRAME')
     if (navbar?.type !== 'FRAME' || input?.type !== 'FRAME') return
     expect(navbar.primaryAxisAlign).toBe('SPACE_BETWEEN')
-    expect(input.width).toBe(312)
+    expect(input.width).toBe(312 + 2 * 12 + 2 * 1)
     expect(input.paddingLeft).toBe(12)
 
     const badge = graph.getChildren(navbar.id)[1]

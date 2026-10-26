@@ -1,18 +1,14 @@
 import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 
-import {
-  exportFigFile,
-  FigmaAPI,
-  initCodec,
-  parseFigFile,
-  SceneGraph,
-  type Variable
-} from '@open-pencil/core'
-import type { Color } from '@open-pencil/scene-graph'
-
 import { expectDefined } from '#core-tests/helpers/assert'
 import { parseFixture } from '#core-tests/helpers/fig/fixtures'
 import { runsHeavyTests } from '#core-tests/helpers/test-utils'
+
+import { FigmaAPI } from '@open-pencil/core/figma-api'
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { SceneGraph, type Variable } from '@open-pencil/scene-graph'
+import type { Color } from '@open-pencil/scene-graph/primitives'
 
 setDefaultTimeout(60_000)
 
@@ -316,7 +312,8 @@ describe('variable roundtrip', () => {
         { modeId: '4:8', name: 'Dark', condition: '[data-theme="dark"]' }
       ],
       defaultModeId: '4:7',
-      variableIds: []
+      variableIds: [],
+      modeAttribute: 'data-scheme'
     })
     const add = (id: string, name: string, extra: Partial<Variable>) =>
       graph.addVariable({
@@ -343,10 +340,13 @@ describe('variable roundtrip', () => {
       codeSyntax: { WEB: 'var(--page-gutter)' },
       expressions: { '4:7': { css: 'clamp(1rem, 4vw, 2rem)', resolved: 16 } }
     })
-    expect(reimported.variableCollections.get('4:70')?.modes).toEqual([
+    // Modes also come back with the places the file saved for them.
+    expect(reimported.variableCollections.get('4:70')?.modes).toMatchObject([
       { modeId: '4:7', name: 'Light', condition: undefined },
       { modeId: '4:8', name: 'Dark', condition: '[data-theme="dark"]' }
     ])
+    expect(reimported.variableCollections.get('4:70')?.modeAttribute).toBe('data-scheme')
+    expect(reimported.variableCollections.get('4:70')?.pluginData).toBeUndefined()
     // Rebuilt on save, never duplicated into pass-through plugin data.
     expect(page.pluginData).toBeUndefined()
   })

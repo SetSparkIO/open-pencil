@@ -1,28 +1,29 @@
+import { sumBy } from 'es-toolkit'
+import { filename } from 'pathe/utils'
+
 import type { Fill } from '@open-pencil/scene-graph'
 import { getWorldMatrix } from '@open-pencil/scene-graph/coordinate'
+import {
+  computeImageHash,
+  IMPORTABLE_RASTER_TYPES,
+  isSVGFile
+} from '@open-pencil/scene-graph/images'
 import Matrix from '@open-pencil/scene-graph/matrix'
 
 import { TRANSPARENT } from '#core/constants'
-import { resolvePasteTarget } from '#core/editor/clipboard/paste-target'
+import { resolvePasteTarget } from '#core/editor/clipboard/paste/target'
 import type { EditorContext } from '#core/editor/types'
-import { computeImageHash } from '#core/figma-api'
 import {
   createSVGNodesFromImport,
+  isSVGMarkup,
   prepareSVGImport,
+  svgImportFonts,
   type SVGImportData
 } from '#core/io/formats/svg'
 import { computeAllLayouts } from '#core/layout'
 
 const IMAGE_MAX_DIMENSION = 4096
 const ASSET_GAP = 20
-
-const RASTER_IMAGE_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'image/avif'
-])
 
 interface PreparedRasterAsset {
   kind: 'raster'
@@ -35,7 +36,8 @@ interface PreparedRasterAsset {
 interface PreparedSVGAsset {
   kind: 'svg'
   data: SVGImportData
-  name: string
+  /** A dropped file's name; pasted markup is named as Figma names it. */
+  name?: string
   width: number
   height: number
 }
@@ -47,12 +49,6 @@ type PushCreatedNodesUndo = (
   previousSelection: Set<string>,
   label?: string
 ) => void
-
-function isSVGFile(file: Pick<File, 'name' | 'type'>): boolean {
-  return (
-    file.type === 'image/svg+xml' || (file.type === '' && file.name.toLowerCase().endsWith('.svg'))
-  )
-}
 
 export function createClipboardAssetActions(
   ctx: EditorContext,
@@ -87,13 +83,13 @@ export function createClipboardAssetActions(
         ? {
             kind: 'svg',
             data,
-            name: file.name.replace(/\.svg$/i, '') || 'SVG',
+            name: filename(file.name) || undefined,
             width: data.width,
             height: data.height
           }
         : null
     }
-    if (!RASTER_IMAGE_TYPES.has(file.type)) return null
+    if (!IMPORTABLE_RASTER_TYPES.has(file.type)) return null
     const bytes = new Uint8Array(await file.arrayBuffer())
     const dimensions = decodeImageDimensions(bytes)
     return dimensions ? { kind: 'raster', bytes, name: file.name, ...dimensions } : null
@@ -122,7 +118,7 @@ export function createClipboardAssetActions(
       visible: true
     }
     return ctx.graph.createNode('RECTANGLE', parentId, {
-      name: asset.name.replace(/\.[^.]+$/, ''),
+      name: filename(asset.name) ?? asset.name,
       x,
       y,
       width: asset.width,
@@ -131,17 +127,13 @@ export function createClipboardAssetActions(
     }).id
   }
 
-  async function placeFiles(files: File[], cx: number, cy: number) {
-    const prepared = (await Promise.all(files.map(prepareAsset))).filter(
-      (asset): asset is PreparedAsset => asset !== null
-    )
-    if (prepared.length === 0) return
+  function placeAssets(prepared: PreparedAsset[], cx: number, cy: number, label: string): boolean {
+    if (prepared.length === 0) return false
 
     const previousSelection = new Set(ctx.state.selectedIds)
     const parentId = resolvePasteTarget(ctx)
     const center = parentLocalPoint(parentId, cx, cy)
-    const totalWidth =
-      prepared.reduce((total, asset) => total + asset.width, 0) + ASSET_GAP * (prepared.length - 1)
+    const totalWidth = sumBy(prepared, (asset) => asset.width) + ASSET_GAP * (prepared.length - 1)
     const maxHeight = Math.max(...prepared.map((asset) => asset.height))
     let x = center.x - totalWidth / 2
     const y = center.y - maxHeight / 2
@@ -165,20 +157,48 @@ export function createClipboardAssetActions(
       throw error
     }
 
-    if (created.length === 0) return
+    if (created.length === 0) return false
     computeAllLayouts(ctx.graph, ctx.state.currentPageId)
     ctx.setSelectedIds(new Set(created))
-    pushCreatedNodesUndo(created, previousSelection, 'Place files')
+    pushCreatedNodesUndo(created, previousSelection, label)
     ctx.requestRender()
+    return true
+  }
+
+  /** Load the fonts of imported SVG text, so it is measured and placed with them. */
+  async function loadSVGFonts(assets: PreparedAsset[]) {
+    const fonts = assets.flatMap((asset) =>
+      asset.kind === 'svg' ? svgImportFonts(asset.data) : []
+    )
+    await Promise.all(
+      fonts.map((font) => ctx.loadFont(font.family, font.style, font.characters).catch(() => null))
+    )
+  }
+
+  async function placeFiles(files: File[], cx: number, cy: number) {
+    const prepared = (await Promise.all(files.map(prepareAsset))).filter(
+      (asset): asset is PreparedAsset => asset !== null
+    )
+    await loadSVGFonts(prepared)
+    placeAssets(prepared, cx, cy, 'Place files')
+  }
+
+  /** Paste SVG markup as layers, as Figma does; false when the text is not SVG. */
+  async function pasteSVG(markup: string, cx: number, cy: number): Promise<boolean> {
+    const data = isSVGMarkup(markup) ? prepareSVGImport(markup) : null
+    if (!data) return false
+    const asset: PreparedAsset = { kind: 'svg', data, width: data.width, height: data.height }
+    await loadSVGFonts([asset])
+    return placeAssets([asset], cx, cy, 'Paste SVG')
   }
 
   function placeImageFiles(files: File[], cx: number, cy: number) {
     return placeFiles(
-      files.filter((file) => RASTER_IMAGE_TYPES.has(file.type)),
+      files.filter((file) => IMPORTABLE_RASTER_TYPES.has(file.type)),
       cx,
       cy
     )
   }
 
-  return { storeImage, placeFiles, placeImageFiles }
+  return { storeImage, placeFiles, placeImageFiles, pasteSVG }
 }

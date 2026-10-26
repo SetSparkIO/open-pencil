@@ -16,10 +16,12 @@ import {
   gradient,
   linearGradient,
   radialGradient,
+  shader,
   solid,
   type GradientPaintOptions,
   type SolidPaintOptions
 } from './paints'
+import { ref } from './refs'
 
 /** Every option a helper reads; `satisfies` keeps the list equal to the options type. */
 type OptionKeys<Options> = Record<keyof Options, true>
@@ -96,10 +98,12 @@ export function designJSXHelpers(warnings: string[]) {
     backgroundBlur: checked(warnings, 'backgroundBlur', backgroundBlur, BLUR_OPTIONS, 0),
     foregroundBlur: checked(warnings, 'foregroundBlur', foregroundBlur, BLUR_OPTIONS, 0),
     solid: checked(warnings, 'solid', solid, SOLID_OPTIONS, 1),
+    shader: checked(warnings, 'shader', shader, SOLID_OPTIONS, 1),
     gradient: checked(warnings, 'gradient', gradient, GRADIENT_OPTIONS, 2),
     linearGradient: checked(warnings, 'linearGradient', linearGradient, GRADIENT_OPTIONS, 1),
     radialGradient: checked(warnings, 'radialGradient', radialGradient, GRADIENT_OPTIONS, 1),
     angularGradient: checked(warnings, 'angularGradient', angularGradient, GRADIENT_OPTIONS, 1),
-    diamondGradient: checked(warnings, 'diamondGradient', diamondGradient, GRADIENT_OPTIONS, 1)
+    diamondGradient: checked(warnings, 'diamondGradient', diamondGradient, GRADIENT_OPTIONS, 1),
+    ref
   }
 }

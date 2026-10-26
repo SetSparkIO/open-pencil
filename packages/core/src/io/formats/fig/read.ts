@@ -1,6 +1,6 @@
 import type { FigPageManifestEntry } from '@open-pencil/kiwi/fig'
+import { loadFigDataDecompressor } from '@open-pencil/kiwi/fig/container'
 import type { SceneGraph } from '@open-pencil/scene-graph'
-import { randomHex } from '@open-pencil/scene-graph/random'
 
 import { IS_BROWSER } from '#core/constants'
 import { deserializeSceneGraph } from '#core/kiwi/fig/parse/transfer'
@@ -8,6 +8,11 @@ import {
   registerFigPopulationWorker,
   registerOriginalArchiveRequest
 } from '#core/kiwi/fig/population/client'
+import {
+  localFigArchive,
+  registerFigArchive,
+  workerFigArchive
+} from '#core/kiwi/fig/session/archive/access'
 import { createFigSessionWorker } from '#core/kiwi/fig/session/client'
 import {
   registerReaderRecovery,
@@ -33,19 +38,25 @@ function parseFigFileSync(buffer: ArrayBuffer, options: ParseFigFileOptions = {}
   options.signal?.throwIfAborted()
   const bytes = buffer.slice(0)
   registerReaderSession(bytes, reader.session, reader.diagnostics)
-  registerOriginalArchiveRequest(reader.graph, async () => new Uint8Array(bytes.slice(0)))
+  // Taken now, while the records are decoded: the archive outlives the reader's session.
+  const archiveInfo = reader.session.archiveRecordInfo()
+  const archive = localFigArchive(bytes, () => archiveInfo)
+  registerFigArchive(reader.graph, archive)
+  registerOriginalArchiveRequest(reader.graph, () => archive.original())
   return reader.graph
 }
 
-export function parseFigFileViaWorker(
+export async function parseFigFileViaWorker(
   buffer: ArrayBuffer,
   options: ParseFigFileOptions
 ): Promise<SceneGraph> {
+  options.signal?.throwIfAborted()
+  // The worker loads its own; this thread patches the archive on save, which reads it again.
+  await loadFigDataDecompressor()
   return new Promise((resolve, reject) => {
     options.signal?.throwIfAborted()
     const worker = createFigSessionWorker()
     const channel = new MessageChannel()
-    const pendingArchives = new Map<string, (bytes: Uint8Array) => void>()
     const abort = () => {
       channel.port1.postMessage({ type: 'dispose' })
       channel.port1.close()
@@ -55,15 +66,6 @@ export function parseFigFileViaWorker(
     options.signal?.addEventListener('abort', abort, { once: true })
     const cleanupAbort = () => options.signal?.removeEventListener('abort', abort)
 
-    // A listener of its own: registerFigPopulationWorker takes over port1.onmessage
-    // once the graph arrives, and archive requests are made after that.
-    channel.port1.addEventListener('message', (e: MessageEvent<FigSessionResponse>) => {
-      if (e.data.type !== 'original-archive-result') return
-      const resolveArchive = pendingArchives.get(e.data.requestId)
-      if (!resolveArchive) return
-      pendingArchives.delete(e.data.requestId)
-      resolveArchive(e.data.bytes)
-    })
     channel.port1.onmessage = (e: MessageEvent<FigSessionResponse>) => {
       if (e.data.type === 'page-manifest') {
         options.onPages?.(e.data.pages)
@@ -81,18 +83,17 @@ export function parseFigFileViaWorker(
         const graph = deserializeSceneGraph(e.data.graph)
         if (options.populate === 'first-page' || options.populate === 'none') {
           cleanupAbort()
-          if (!e.data.checkpoint) throw new Error('Missing reader checkpoint')
-          registerReaderRecovery(graph, buffer.slice(0), e.data.checkpoint)
-          registerFigPopulationWorker(graph, worker, channel.port1)
-          registerOriginalArchiveRequest(
-            graph,
-            () =>
-              new Promise<Uint8Array>((resolveArchive) => {
-                const requestId = randomHex()
-                pendingArchives.set(requestId, resolveArchive)
-                channel.port1.postMessage({ type: 'original-archive', requestId })
-              })
+          const { checkpoint, archiveInfo } = e.data
+          if (!checkpoint || !archiveInfo) throw new Error('Missing reader checkpoint')
+          const bytes = buffer.slice(0)
+          registerReaderRecovery(graph, bytes, checkpoint)
+          // The worker writes the archive back; without it the main thread does, from its copy.
+          const archive = workerFigArchive(channel.port1, worker, () =>
+            localFigArchive(bytes, () => archiveInfo)
           )
+          registerFigPopulationWorker(graph, worker, channel.port1, () => archive.dropWorker())
+          registerFigArchive(graph, archive)
+          registerOriginalArchiveRequest(graph, () => archive.original())
         } else {
           cleanupAbort()
           channel.port1.close()
@@ -114,15 +115,13 @@ export function parseFigFileViaWorker(
       reject(new Error(err.message || 'Worker failed to parse .fig file'))
     }
     const workerBuffer = buffer.slice(0)
-    const archiveBuffer = buffer.slice(0)
     const request: FigSessionOpenRequest = {
       type: 'open',
-      originalBuffer: workerBuffer,
-      archiveBuffer,
+      buffer: workerBuffer,
       options: { populate: options.populate },
       port: channel.port2
     }
-    worker.postMessage(request, [workerBuffer, archiveBuffer, channel.port2])
+    worker.postMessage(request, [workerBuffer, channel.port2])
   })
 }
 
@@ -131,14 +130,18 @@ export async function parseFigFile(
   options: ParseFigFileOptions = {}
 ): Promise<SceneGraph> {
   options.signal?.throwIfAborted()
+  // Loaded here even when a worker opens the file: recovering its pages later reads the archive
+  // again on this thread.
+  await loadFigDataDecompressor()
+  options.signal?.throwIfAborted()
   if (typeof Worker !== 'undefined' && IS_BROWSER) {
-    const copy = buffer.slice(0)
     try {
+      // The worker gets its own copy, so `buffer` is still whole for the fallback.
       return await parseFigFileViaWorker(buffer, options)
     } catch (error) {
       if (options.signal?.aborted || error instanceof ReaderSemanticError) throw error
       console.warn('Worker parsing failed, falling back to main thread:', error)
-      return parseFigFileSync(copy, options)
+      return parseFigFileSync(buffer, options)
     }
   }
   options.signal?.throwIfAborted()

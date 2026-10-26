@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { exportFigFile, parseFigFile, SceneGraph } from '@open-pencil/core'
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { SceneGraph } from '@open-pencil/scene-graph'
+import { lineHeightPixels, pixelLength } from '@open-pencil/scene-graph/text'
 
 import { expectDefined } from '#tests/helpers/assert'
 
@@ -19,14 +21,14 @@ describe('Fix 4: text lineHeight serialization', () => {
       fontFamily: 'Inter',
       fontWeight: 400,
       fontSize: 16,
-      lineHeight: 24
+      lineHeight: pixelLength(24)
     })
 
     const changes = toKiwi(node, graph)
     expect(changes[0].lineHeight).toEqual({ value: 24, units: 'PIXELS' })
   })
 
-  test('text node without lineHeight omits lineHeight', () => {
+  test('text node in auto line height writes it as Figma does', () => {
     const graph = new SceneGraph()
     const node = graph.createNode('TEXT', pageId(graph), {
       name: 'DefaultLH',
@@ -41,7 +43,7 @@ describe('Fix 4: text lineHeight serialization', () => {
     })
 
     const changes = toKiwi(node, graph)
-    expect(changes[0].lineHeight).toBeUndefined()
+    expect(changes[0].lineHeight).toEqual({ value: 100, units: 'PERCENT' })
   })
 
   test('lineHeight survives roundtrip through export/parse', async () => {
@@ -56,7 +58,7 @@ describe('Fix 4: text lineHeight serialization', () => {
       fontFamily: 'Inter',
       fontWeight: 400,
       fontSize: 16,
-      lineHeight: 28
+      lineHeight: pixelLength(28)
     })
 
     const exported = await exportFigFile(graph)
@@ -66,7 +68,7 @@ describe('Fix 4: text lineHeight serialization', () => {
       [...reimported.nodes.values()].find((n) => n.type === 'TEXT'),
       'text node'
     )
-    expect(textNode.lineHeight).toBe(28)
+    expect(lineHeightPixels(textNode.lineHeight, textNode.fontSize)).toBe(28)
   })
 })
 

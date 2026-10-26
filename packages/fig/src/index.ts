@@ -2,19 +2,39 @@ export { materializeFigFragment, type FragmentMaterializationOptions } from './d
 export {
   materializeDocument,
   materializeFigArchive,
+  figCheckpointRecords,
   type FigSessionCheckpoint,
   type FigSessionResume,
   createFigDocumentSession,
   type DocumentAssemblyOptions
 } from './document/materialize'
+export { figArchiveMetaSchema, type FigArchiveMetaJSON } from './schema'
 export {
   compressFigDataSync,
+  figArchiveMetaJSON,
   parseFigBuffer,
+  readFigArchiveMeta,
+  renameFigArchive,
   writeFigArchive,
+  type FigArchiveMeta,
   type FigImageEntry,
   type FigParseResult,
   type WriteFigArchiveInput
 } from './archive'
+export {
+  figArchiveComponentUsePages,
+  figArchiveRecordInfo,
+  figComponentUsePages,
+  patchFigArchive,
+  patchFigRecords,
+  type FigArchiveRecordInfo,
+  type FigPatchedArchiveInput,
+  entryPathKey,
+  type FigEntryListPatch,
+  type FigEntryPatch,
+  type FigRecordFieldPatch,
+  type FigRecordPatch
+} from './record-patch'
 export {
   extractFigThumbnailFromReader,
   type FigRangeReader,

@@ -1,4 +1,5 @@
-import type { SceneGraph, SceneNode, SharedStyle, SharedStyleKind, SharedStyleType } from './index'
+import type { SceneGraph } from './graph'
+import type { SceneNode, SharedStyle, SharedStyleKind, SharedStyleType } from './types'
 
 const STYLE_REF_KEYS = {
   fill: 'fillStyleId',
@@ -8,6 +9,9 @@ const STYLE_REF_KEYS = {
   grid: 'gridStyleId'
 } as const satisfies Record<SharedStyleKind, keyof SceneNode>
 
+/** The fields that link a layer to its shared styles. */
+export const STYLE_LINK_FIELDS = Object.values(STYLE_REF_KEYS)
+
 const STYLE_TYPES = {
   fill: 'FILL',
   stroke: 'FILL',
@@ -16,7 +20,8 @@ const STYLE_TYPES = {
   grid: 'GRID'
 } as const satisfies Record<SharedStyleKind, SharedStyleType>
 
-const TEXT_STYLE_KEYS = new Set<keyof SceneNode>([
+/** The fields a text style gives what uses it; changing one leaves the style. */
+export const SHARED_TEXT_STYLE_FIELDS = [
   'fontFamily',
   'fontWeight',
   'italic',
@@ -26,7 +31,9 @@ const TEXT_STYLE_KEYS = new Set<keyof SceneNode>([
   'textDecoration',
   'textCase',
   'fontFeatures'
-])
+] as const satisfies readonly (keyof SceneNode)[]
+
+const TEXT_STYLE_KEYS = new Set<keyof SceneNode>(SHARED_TEXT_STYLE_FIELDS)
 
 export function sharedStyleRefKey(kind: SharedStyleKind): (typeof STYLE_REF_KEYS)[SharedStyleKind] {
   return STYLE_REF_KEYS[kind]

@@ -1,15 +1,14 @@
 import { orderBy } from 'es-toolkit/array'
 import * as v from 'valibot'
 
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 export const analyzeSpacing = defineTool({
   name: 'analyze_spacing',
   description:
     'Analyze spacing values (gap, padding) across the current page. Checks grid compliance.',
   execution: { kind: 'sync', mutation: 'none' },
-  input: v.object({
+  input: v.strictObject({
     grid: v.optional(
       toolNumber(
         v.pipe(

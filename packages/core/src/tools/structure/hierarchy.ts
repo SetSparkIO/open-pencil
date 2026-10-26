@@ -7,7 +7,7 @@ export const reparentNode = defineTool({
 
   description: 'Move a node into a different parent.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     id: v.pipe(v.string(), v.description('Node ID to move')),
     parent_id: v.pipe(v.string(), v.description('New parent node ID'))
   }),
@@ -26,7 +26,7 @@ export const groupNodes = defineTool({
 
   description: 'Group selected nodes.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     ids: v.pipe(v.array(v.string()), v.minLength(2), v.description('Node IDs to group'))
   }),
   execute: (figma, { ids }) => {
@@ -43,7 +43,7 @@ export const ungroupNode = defineTool({
 
   description: 'Ungroup a group node.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     id: v.pipe(v.string(), v.description('Group node ID'))
   }),
   execute: (figma, { id }) => {
@@ -59,12 +59,13 @@ export const flattenNodes = defineTool({
 
   description: 'Flatten nodes into a single vector.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     ids: v.pipe(v.array(v.string()), v.minLength(1), v.description('Node IDs to flatten'))
   }),
   execute: (figma, { ids }) => {
-    const result = figma.flattenNode(ids)
-    return nodeSummary(result)
+    const nodes = requireNodes(figma, ids)
+    if (!nodes) return { error: 'One or more node IDs were not found' }
+    return nodeSummary(figma.flatten(nodes, nodes[0].parent ?? figma.currentPage))
   }
 })
 
@@ -73,7 +74,7 @@ export const nodeToComponent = defineTool({
 
   description: 'Convert one or more frames/groups into components.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     ids: v.pipe(v.array(v.string()), v.minLength(1), v.description('Node IDs to convert'))
   }),
   execute: (figma, { ids }) => {

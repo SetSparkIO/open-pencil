@@ -1,7 +1,14 @@
-import type { SceneGraph, SceneNode, NodeType } from '@open-pencil/scene-graph'
-import { DEFAULT_FONT_FAMILY } from '@open-pencil/scene-graph/constants'
-import { resolveNodeTextDirection } from '@open-pencil/scene-graph/text-direction'
+import { isEqual, omitBy, pick } from 'es-toolkit'
 
+import type { ArcData, SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import { DEFAULT_FONT_FAMILY } from '@open-pencil/scene-graph/constants'
+import { layoutSizing } from '@open-pencil/scene-graph/layout'
+import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
+import { resolveNodeTextDirection } from '@open-pencil/scene-graph/text/direction'
+
+import { BLEND_MODE, TEXT_ALIGN, TEXT_ALIGN_VERTICAL, TEXT_CASE, TEXT_DECORATION } from '../enums'
+import { textLengthJSX } from '../overrides/text'
+import { collectDecorationProps } from './decoration'
 import {
   collectCornerRadii,
   collectPadding,
@@ -16,22 +23,6 @@ import type { JSXProp } from './value'
 export type { JSXProp } from './value'
 
 /** The element that represents each node type; other types are not exported. */
-export const NODE_TYPE_TO_TAG: Partial<Record<NodeType, string>> = {
-  FRAME: 'Frame',
-  RECTANGLE: 'Rectangle',
-  ROUNDED_RECTANGLE: 'Rectangle',
-  ELLIPSE: 'Ellipse',
-  TEXT: 'Text',
-  LINE: 'Line',
-  STAR: 'Star',
-  POLYGON: 'Polygon',
-  VECTOR: 'Vector',
-  GROUP: 'Group',
-  SECTION: 'Section',
-  COMPONENT: 'Component',
-  COMPONENT_SET: 'Frame',
-  INSTANCE: 'Frame'
-}
 
 function collectGridSizingProps(node: SceneNode, props: JSXProp[]): void {
   props.push(['grid', true])
@@ -50,13 +41,12 @@ function collectFlexSizingProps(node: SceneNode, props: JSXProp[]): void {
   const primaryAxis = node.layoutMode === 'HORIZONTAL' ? 'width' : 'height'
   const crossAxis = node.layoutMode === 'HORIZONTAL' ? 'height' : 'width'
 
-  if (node.primaryAxisSizing === 'FILL') props.push([primaryAxis === 'width' ? 'w' : 'h', 'fill'])
-  else if (node.primaryAxisSizing !== 'HUG')
+  if (node.primaryAxisSizing !== 'HUG') {
     props.push([primaryAxis === 'width' ? 'w' : 'h', node[primaryAxis]])
-
-  if (node.counterAxisSizing === 'FILL') props.push([crossAxis === 'width' ? 'w' : 'h', 'fill'])
-  else if (node.counterAxisSizing !== 'HUG')
+  }
+  if (node.counterAxisSizing !== 'HUG') {
     props.push([crossAxis === 'width' ? 'w' : 'h', node[crossAxis]])
+  }
 }
 
 function collectGridPositionProps(node: SceneNode, props: JSXProp[]): void {
@@ -83,6 +73,7 @@ function collectFlexAlignmentProps(node: SceneNode, props: JSXProp[]): void {
   if (node.counterAxisAlign === 'CENTER') props.push(['items', 'center'])
   else if (node.counterAxisAlign === 'MAX') props.push(['items', 'end'])
   else if (node.counterAxisAlign === 'STRETCH') props.push(['items', 'stretch'])
+  else if (node.counterAxisAlign === 'BASELINE') props.push(['items', 'baseline'])
 }
 
 function collectAutoLayoutPaddingProps(node: SceneNode, props: JSXProp[]): void {
@@ -131,8 +122,10 @@ function collectAppearanceProps(node: SceneNode, props: JSXProp[]): void {
   if (node.cornerSmoothing > 0) props.push(['cornerSmoothing', node.cornerSmoothing])
   if (node.opacity < 1) props.push(['opacity', Math.round(node.opacity * 100) / 100])
   if (node.rotation !== 0) props.push(['rotate', Math.round(node.rotation * 100) / 100])
+  if (node.flipX) props.push(['flipX', true])
+  if (node.flipY) props.push(['flipY', true])
   if (node.blendMode !== 'PASS_THROUGH' && node.blendMode !== 'NORMAL') {
-    props.push(['blendMode', node.blendMode.toLowerCase()])
+    props.push(['blendMode', BLEND_MODE.print(node.blendMode)])
   }
   if (node.clipsContent) props.push(['overflow', 'hidden'])
   collectEffectProps(node, props)
@@ -153,6 +146,21 @@ function collectPositionProps(
   if (node.y !== 0) props.push(['y', node.y])
 }
 
+/** A layer's opacity and whether it is hidden, for an element that writes its own props. */
+export function presenceProps(node: SceneNode): JSXProp[] {
+  const props: JSXProp[] = []
+  if (node.opacity < 1) props.push(['opacity', Math.round(node.opacity * 100) / 100])
+  if (!node.visible) props.push(['visible', false])
+  return props
+}
+
+/** Where a layer sits in its parent, as the export writes any layer's position. */
+export function positionProps(node: SceneNode, graph: SceneGraph): JSXProp[] {
+  const props: JSXProp[] = []
+  collectPositionProps(node, getNodeContext(node, graph), props)
+  return props
+}
+
 function collectSizingProps(
   node: SceneNode,
   ctx: ReturnType<typeof getNodeContext>,
@@ -168,13 +176,23 @@ function collectSizingProps(
   }
 
   if (!ctx.parentIsAutoLayout) return
-  if (node.layoutGrow > 0) props.push(['grow', node.layoutGrow])
-  if (node.layoutAlignSelf === 'STRETCH') {
-    const parent = node.parentId ? graph.getNode(node.parentId) : null
-    if (parent && (parent.layoutMode === 'HORIZONTAL' || parent.layoutMode === 'VERTICAL')) {
-      const crossDim = parent.layoutMode === 'HORIZONTAL' ? 'h' : 'w'
-      if (!props.some(([k]) => k === crossDim)) props.push([crossDim, 'fill'])
-    }
+  const parent = node.parentId ? graph.getNode(node.parentId) : undefined
+  // A flex child's main-axis fill keeps its grow factor; every other fill is `"fill"`.
+  const growAxis = parent?.layoutMode === 'VERTICAL' ? 'VERTICAL' : 'HORIZONTAL'
+  const keepsGrow = parent?.layoutMode !== 'GRID' && node.layoutGrow > 0
+  if (keepsGrow) props.push(['grow', node.layoutGrow])
+  for (const [axis, key] of [
+    ['HORIZONTAL', 'w'],
+    ['VERTICAL', 'h']
+  ] as const) {
+    if (keepsGrow && axis === growAxis) continue
+    if (layoutSizing(graph, node, axis) !== 'FILL') continue
+    // Stretch inherited from the parent's alignment is written on the parent.
+    if (axis !== growAxis && node.layoutAlignSelf !== 'STRETCH') continue
+    // Fill replaces the size the node had before it filled.
+    const index = props.findIndex(([k]) => k === key)
+    if (index === -1) props.push([key, 'fill'])
+    else props[index] = [key, 'fill']
   }
 }
 
@@ -201,31 +219,58 @@ function collectTextSizingProps(node: SceneNode, graph: SceneGraph, props: JSXPr
   if (emitH && node.height > 0) props.push(['h', node.height])
 }
 
+const DECORATION_FIELDS = [
+  'textDecorationStyle',
+  'textDecorationFills',
+  'textDecorationThickness',
+  'textUnderlineOffset',
+  'textDecorationSkipInk'
+] as const
+
+const TEXT_DEFAULTS = pick(
+  createDefaultNode(() => '', 'TEXT'),
+  DECORATION_FIELDS
+)
+
+/** A font weight as `weight` writes it, by name for the weights that have one. */
+export function fontWeightValue(weight: number): string | number {
+  if (weight === 700) return 'bold'
+  if (weight === 500) return 'medium'
+  return weight
+}
+
 function collectTextNodeProps(node: SceneNode, props: JSXProp[]): void {
   const direction = resolveNodeTextDirection(node)
   if (node.fontSize !== 14) props.push(['size', node.fontSize])
   if (node.fontFamily && node.fontFamily !== DEFAULT_FONT_FAMILY)
     props.push(['font', node.fontFamily])
-  if (node.fontWeight !== 400) {
-    if (node.fontWeight === 700) props.push(['weight', 'bold'])
-    else if (node.fontWeight === 500) props.push(['weight', 'medium'])
-    else props.push(['weight', node.fontWeight])
-  }
+  if (node.fontWeight !== 400) props.push(['weight', fontWeightValue(node.fontWeight)])
   if (direction === 'RTL') props.push(['dir', 'rtl'])
   if (node.italic) props.push(['italic', true])
   if (node.textAlignHorizontal !== 'LEFT') {
-    props.push(['textAlign', node.textAlignHorizontal.toLowerCase()])
+    props.push(['textAlign', TEXT_ALIGN.print(node.textAlignHorizontal)])
   }
   if (node.textAlignVertical !== 'TOP') {
-    props.push(['textAlignVertical', node.textAlignVertical.toLowerCase()])
+    props.push(['textAlignVertical', TEXT_ALIGN_VERTICAL.print(node.textAlignVertical)])
   }
-  if (node.lineHeight != null) props.push(['lineHeight', node.lineHeight])
-  if (node.letterSpacing !== 0) props.push(['letterSpacing', node.letterSpacing])
+  if (node.lineHeight != null) props.push(['lineHeight', textLengthJSX(node.lineHeight)])
+  if (node.letterSpacing.value !== 0) {
+    props.push(['letterSpacing', textLengthJSX(node.letterSpacing)])
+  }
   if (node.textDecoration !== 'NONE')
-    props.push(['textDecoration', node.textDecoration.toLowerCase()])
-  if (node.textCase !== 'ORIGINAL') props.push(['textCase', node.textCase.toLowerCase()])
+    props.push(['textDecoration', TEXT_DECORATION.print(node.textDecoration)])
+  collectDecorationProps(
+    omitBy(pick(node, DECORATION_FIELDS), (value, key) => isEqual(value, TEXT_DEFAULTS[key])),
+    node,
+    props
+  )
+  if (node.textCase !== 'ORIGINAL') props.push(['textCase', TEXT_CASE.print(node.textCase)])
   if (node.maxLines != null) props.push(['maxLines', node.maxLines])
   if (node.textTruncation === 'ENDING' && node.maxLines == null) props.push(['truncate', true])
+  if (node.paragraphSpacing !== 0) props.push(['paragraphSpacing', node.paragraphSpacing])
+  if (node.listSpacing !== 0) props.push(['listSpacing', node.listSpacing])
+  if (node.paragraphIndent !== 0) props.push(['paragraphIndent', node.paragraphIndent])
+  if (node.hangingList) props.push(['hangingList', true])
 }
 
 const TEXT_AUTO_RESIZE: Record<SceneNode['textAutoResize'], string> = {
@@ -249,7 +294,21 @@ function collectTextAutoResizeProp(
   }
 }
 
+const roundDegrees = (radians: number) => Math.round(((radians * 180) / Math.PI) * 10_000) / 10_000
+
+/** An ellipse's arc, written only where it is not a whole ellipse. */
+function collectArcProps(arc: ArcData | null, props: JSXProp[]): void {
+  if (!arc) return
+  const start = roundDegrees(arc.startingAngle)
+  const end = roundDegrees(arc.endingAngle)
+  if (start !== 0) props.push(['startAngle', start])
+  // A whole turn from the start is the default end.
+  if (Math.abs(end - (start + 360)) > 1e-6) props.push(['endAngle', end])
+  if (arc.innerRadius !== 0) props.push(['innerRadius', arc.innerRadius])
+}
+
 function collectShapeNodeProps(node: SceneNode, props: JSXProp[]): void {
+  if (node.type === 'ELLIPSE') collectArcProps(node.arcData, props)
   if (node.type === 'STAR') {
     if (node.pointCount !== 5) props.push(['points', node.pointCount])
     if (node.starInnerRadius !== 0.382) props.push(['innerRadius', node.starInnerRadius])

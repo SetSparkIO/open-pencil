@@ -2,10 +2,8 @@ import * as v from 'valibot'
 
 import { parseColor } from '@open-pencil/scene-graph/color'
 
-import { fetchIcons, searchIconsBatch } from '#core/icons'
-import { createIconFromPaths } from '#core/icons/render'
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { placeIcon } from '#core/icons'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 export const fetchIconsTool = defineTool({
   name: 'fetch_icons',
@@ -14,7 +12,7 @@ export const fetchIconsTool = defineTool({
     'Pre-fetch icons from Iconify into cache. Batches by prefix (one HTTP request per set). Call this once with all needed icons, then use insert_icon to place them instantly. Popular sets: lucide (outline), mdi (filled), heroicons, tabler, solar, mingcute, ri (remix).',
   execution: { kind: 'async', mutation: 'none' },
   capabilities: ['network:access'],
-  input: v.object({
+  input: v.strictObject({
     names: v.pipe(
       v.array(v.string()),
       v.minLength(1),
@@ -24,10 +22,10 @@ export const fetchIconsTool = defineTool({
       toolNumber(v.pipe(v.number(), v.description('Icon size in pixels (default: 24)')))
     )
   }),
-  execute: async (_figma, args) => {
+  execute: async (figma, args) => {
     const size = args.size ?? 24
     try {
-      const icons = await fetchIcons(args.names, size)
+      const icons = await figma.icons.icons(args.names, size)
       const fetched = [...icons.keys()]
       const notFound = args.names.filter((name) => !icons.has(name))
       const result: Record<string, unknown> = { fetched, count: fetched.length }
@@ -46,7 +44,7 @@ export const insertIcon = defineTool({
     'Insert one or more vector icons onto the canvas. Pass a single name or multiple names to batch-insert into the same parent. If already cached by fetch_icons — instant, no network request.',
   execution: { kind: 'async', mutation: 'document' },
   capabilities: ['document:write', 'network:access'],
-  input: v.object({
+  input: v.strictObject({
     names: v.optional(
       v.pipe(
         v.array(v.string()),
@@ -77,7 +75,7 @@ export const insertIcon = defineTool({
 
     let icons
     try {
-      icons = await fetchIcons(names, size)
+      icons = await figma.icons.icons(names, size)
     } catch (e) {
       return { error: (e as Error).message }
     }
@@ -92,7 +90,7 @@ export const insertIcon = defineTool({
         continue
       }
       const parentId = args.parent_id ?? figma.currentPage.id
-      const frame = createIconFromPaths(figma.graph, icon, name, size, parsedColor, parentId)
+      const frame = placeIcon(figma.graph, parentId, icon, { size, color: parsedColor })
       inserted.push({ id: frame.id, name: frame.name, icon: name })
     }
 
@@ -113,7 +111,7 @@ export const searchIconsTool = defineTool({
     'Search Iconify for icons by keyword. Accepts multiple queries — all searched in parallel. Returns results keyed by query.',
   execution: { kind: 'async', mutation: 'none' },
   capabilities: ['network:access'],
-  input: v.object({
+  input: v.strictObject({
     queries: v.pipe(
       v.array(v.string()),
       v.minLength(1),
@@ -126,17 +124,17 @@ export const searchIconsTool = defineTool({
       v.pipe(v.string(), v.description('Filter by icon set prefix (e.g. "lucide", "mdi")'))
     )
   }),
-  execute: async (_figma, args) => {
+  execute: async (figma, args) => {
     try {
-      const results = await searchIconsBatch(args.queries, {
-        limit: args.limit ?? 5,
-        prefix: args.prefix
-      })
-      const output: Record<string, { icons: string[]; total: number }> = {}
-      for (const [query, result] of results) {
-        output[query] = { icons: result.icons, total: result.total }
-      }
-      return output
+      const options = { limit: args.limit ?? 5, prefix: args.prefix }
+      const results = await Promise.all(
+        args.queries.map(
+          async (query) => [query, await figma.icons.search(query, options)] as const
+        )
+      )
+      return Object.fromEntries(
+        results.map(([query, result]) => [query, { icons: result.icons, total: result.total }])
+      )
     } catch (e) {
       return { error: (e as Error).message }
     }

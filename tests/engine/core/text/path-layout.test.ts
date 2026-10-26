@@ -1,17 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
 import { SceneGraph } from '@open-pencil/scene-graph'
-import type { SceneNode, VectorNetwork } from '@open-pencil/scene-graph'
+import type { SceneNode, TextPathData, VectorNetwork } from '@open-pencil/scene-graph'
+import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 import {
   calibratePathTextLayout,
   fitTextPathBoxToGlyphs,
   getTextPathData,
   layoutPathTextFromAdvances,
-  pathTextSelectionBand,
   pointAtArc,
   reflowPathTextGlyphs,
-  sampleTextPath
+  sampleTextPath,
+  textPathStartArc
 } from '#core/text/path'
 
 import { expectDefined } from '#tests/helpers/assert'
@@ -122,12 +123,10 @@ describe('path-text reflow — real fixture (optional local)', () => {
     const path = expectDefined(sampleTextPath(data, fitted), 'fitted overlay path')
     expect(maxGlyphToPath(path, glyphs)).toBeLessThan(12)
 
-    // Start marker (overlay uses pointAtArc at tValue * length) lands on the
-    // fitted curve near the first glyph.
-    const start = pointAtArc(path, Math.min(Math.max(data.tValue, 0), 1) * path.length)
-    expect(Math.hypot(start.x - glyphs[0].x, start.y - glyphs[0].y)).toBeLessThan(
-      glyphs[0].fontSize
-    )
+    // The start marker sits on the segment Figma marks, near arc 595 of 1540, not at
+    // tValue × length (845.7), where this centered run's first glyph happens to be.
+    expect(data.startSegment).toBe(1)
+    expect(textPathStartArc(data, rawPath)).toBeCloseTo(595, 0)
   })
 
   test('fitTextPathBoxToGlyphs returns null with no glyphs to fit', async () => {
@@ -305,6 +304,33 @@ describe('selection overlay — path helpers', () => {
     expect(Math.hypot(mid.x - start.x, mid.y - start.y)).toBeGreaterThan(1)
   })
 
+  test('the start marker sits on the marked start segment, or at tValue along an unmarked path', () => {
+    const zero = { x: 0, y: 0 }
+    const data: TextPathData = {
+      network: {
+        vertices: [
+          { x: 0, y: 50 },
+          { x: 200, y: 50 },
+          { x: 400, y: 50 }
+        ],
+        segments: [
+          { start: 0, end: 1, tangentStart: zero, tangentEnd: zero },
+          { start: 1, end: 2, tangentStart: zero, tangentEnd: zero }
+        ],
+        regions: []
+      },
+      normalizedSize: { x: 400, y: 100 },
+      tValue: 0.5,
+      forward: true,
+      startSegment: 1
+    }
+    const box = { x: 0, y: 0, width: 400, height: 100 }
+    const path = expectDefined(sampleTextPath(data, box), 'path')
+
+    expect(textPathStartArc(data, path)).toBeCloseTo(300, 0)
+    expect(textPathStartArc({ ...data, startSegment: undefined }, path)).toBeCloseTo(200, 0)
+  })
+
   test('eligible node samples the curve (not a rectangle); dataless node falls back', () => {
     const node = makeCircleTextPathNode()
     // Overlay eligibility seam: retained data + a node-local box are both present.
@@ -337,36 +363,97 @@ describe('selection overlay — path helpers', () => {
     })
     expect(getTextPathData(bare)).toBeNull()
   })
+})
 
-  test('selection band hugs a glyph run that straddles the path seam', () => {
-    const node = makeCircleTextPathNode()
-    const data = expectDefined(getTextPathData(node), 'data')
-    const box = expectDefined(node.textPathBox, 'box')
-
-    // Seam s=0 sits at 3 o'clock (228,128). A run at angles −30°..+30° straddles
-    // it: min/max arc-length would trace the whole opposite (empty) arc, so the
-    // band must instead hug this right-side cluster.
-    const glyphs = [-30, -20, -10, 10, 20, 30].map((deg) => {
-      const a = (deg * Math.PI) / 180
-      return { x: 128 + 100 * Math.cos(a), y: 128 + 100 * Math.sin(a), fontSize: 40, rotation: 0 }
-    })
-
-    const poly = expectDefined(pathTextSelectionBand(data, box, glyphs), 'band')
-    expect(poly.length).toBeGreaterThanOrEqual(6)
-
-    // Centroid on the glyph side (right of centre); the old complement arc gave
-    // a centroid near 9 o'clock (x < 128).
-    let bx = 0
-    for (let i = 0; i < poly.length; i += 2) bx += poly[i]
-    bx /= poly.length / 2
-    expect(bx).toBeGreaterThan(140)
-
-    // Every band vertex hugs some glyph; the complement arc would sit ~2·radius
-    // (~200px) away.
-    for (let i = 0; i < poly.length; i += 2) {
-      let best = Infinity
-      for (const g of glyphs) best = Math.min(best, Math.hypot(poly[i] - g.x, poly[i + 1] - g.y))
-      expect(best).toBeLessThan(60)
+describe('pen-walked glyph rotation', () => {
+  const zero = { x: 0, y: 0 }
+  /** Right 100, then down 100: 200 long, turning a quarter at (100, 50). */
+  function corner(forward = true) {
+    const network: VectorNetwork = {
+      vertices: [
+        { x: 0, y: 50 },
+        { x: 100, y: 50 },
+        { x: 100, y: 150 }
+      ],
+      segments: [
+        { start: 0, end: 1, tangentStart: zero, tangentEnd: zero },
+        { start: 1, end: 2, tangentStart: zero, tangentEnd: zero }
+      ],
+      regions: []
     }
+    const data = { network, normalizedSize: { x: 400, y: 200 }, tValue: 0, forward }
+    const box = { x: 0, y: 0, width: 400, height: 200 }
+    return { data, box, path: expectDefined(sampleTextPath(data, box)) }
+  }
+  /** A glyph 20 wide at font size 40. */
+  const source = { commandsBlob: new Uint8Array(4), fontSize: 40, advance: 0.5 }
+  const chordBetween = (a: Vector, b: Vector) => -Math.atan2(b.y - a.y, b.x - a.x)
+
+  test('a glyph on text running backwards turns along its chord the other way', () => {
+    const { data, box, path } = corner(false)
+    // Starts 10 past the corner and runs back to 10 before it.
+    const [glyph] = expectDefined(
+      layoutPathTextFromAdvances(data, box, 110 / path.length, 0, [source])
+    )
+    const chord = chordBetween(pointAtArc(path, 110), pointAtArc(path, 90))
+    expect(Math.abs(angleDiff(expectDefined(glyph.rotation), chord))).toBeLessThan(1e-9)
+  })
+
+  test('a glyph past the end of an open path turns along what is left of it', () => {
+    const { data, box, path } = corner()
+    // Starts 5 before the end; the rest of it hangs past the end, which stays put.
+    const [glyph] = expectDefined(
+      layoutPathTextFromAdvances(data, box, 195 / path.length, 0, [source])
+    )
+    expect(Math.abs(angleDiff(expectDefined(glyph.rotation), -Math.PI / 2))).toBeLessThan(1e-9)
+  })
+
+  test('a resize turns the glyphs along their new chords, as re-laying them out does', () => {
+    const { data, box, path } = corner()
+    const glyphs = expectDefined(
+      layoutPathTextFromAdvances(data, box, 80 / path.length, 0, [source, source, source])
+    )
+    const layout = expectDefined(calibratePathTextLayout(glyphs, data, box))
+    // Half as wide: the first leg shortens and the corner bends at a different angle.
+    const narrow = { ...box, width: box.width / 2 }
+    const reflowed = expectDefined(reflowPathTextGlyphs(glyphs, data, layout, narrow))
+    const fresh = expectDefined(
+      layoutPathTextFromAdvances(data, narrow, layout.anchor, 0, [source, source, source])
+    )
+    for (const [index, glyph] of reflowed.entries()) {
+      const rotation = expectDefined(glyph.rotation)
+      expect(Math.abs(angleDiff(rotation, expectDefined(fresh[index].rotation)))).toBeLessThan(1e-6)
+    }
+  })
+
+  test('a glyph turns along the line from where it starts on the path to where it ends', () => {
+    const zero = { x: 0, y: 0 }
+    // Right 100, then down 100: 200 long, turning a quarter at (100, 50).
+    const network: VectorNetwork = {
+      vertices: [
+        { x: 0, y: 50 },
+        { x: 100, y: 50 },
+        { x: 100, y: 150 }
+      ],
+      segments: [
+        { start: 0, end: 1, tangentStart: zero, tangentEnd: zero },
+        { start: 1, end: 2, tangentStart: zero, tangentEnd: zero }
+      ],
+      regions: []
+    }
+    const data = { network, normalizedSize: { x: 400, y: 200 }, tValue: 0, forward: true }
+    const box = { x: 0, y: 0, width: 400, height: 200 }
+    const source = { commandsBlob: new Uint8Array(4), fontSize: 40, advance: 0.5 }
+    const path = expectDefined(sampleTextPath(data, box))
+    // The glyph starts 10 before the corner and, 20 wide, ends 10 past it.
+    const [straddling] = expectDefined(
+      layoutPathTextFromAdvances(data, box, 90 / path.length, 0, [source])
+    )
+    const start = pointAtArc(path, 90)
+    const end = pointAtArc(path, 110)
+    const chord = -Math.atan2(end.y - start.y, end.x - start.x)
+    expect(Math.abs(angleDiff(expectDefined(straddling.rotation), chord))).toBeLessThan(1e-9)
+    // Close to a half turn of the corner, not level with the first leg as its left edge is.
+    expect(Math.abs(angleDiff(expectDefined(straddling.rotation), -Math.PI / 4))).toBeLessThan(0.05)
   })
 })

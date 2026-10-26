@@ -1,4 +1,6 @@
-import { ALL_TOOLS, FigmaAPI, SceneGraph } from '@open-pencil/core'
+import { FigmaAPI } from '@open-pencil/core/figma-api'
+import { ALL_TOOLS } from '@open-pencil/core/tools'
+import { SceneGraph } from '@open-pencil/scene-graph'
 
 export { ALL_TOOLS }
 
@@ -10,7 +12,7 @@ export interface ToolResult {
   type?: string
   error?: string
   count?: number
-  nodes?: Array<{ id?: string; name: string; type: string }>
+  nodes?: Array<{ id?: string; name: string; type: string; text?: string }>
   [key: string]: unknown
 }
 

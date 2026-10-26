@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { computed, ref } from 'vue'
 
-import type { EditorCommandId } from '@open-pencil/vue'
+import type { EditorCommandId } from '@open-pencil/vue/editor/commands'
 
 import { buildCanvasContextMenu } from '#vue/editor/menu-model/canvas'
 import type { CanvasMenuOptions } from '#vue/editor/menu-model/canvas'
@@ -13,6 +13,7 @@ function selection(overrides: Partial<CanvasMenuOptions['selection']> = {}) {
     isGroup: ref(false),
     isComponent: ref(false),
     isInstance: ref(false),
+    isIcon: ref(false),
     canCreateComponentSet: ref(false),
     canCreateSlot: ref(false),
     ...overrides

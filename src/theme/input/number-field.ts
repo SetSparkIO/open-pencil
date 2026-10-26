@@ -1,4 +1,4 @@
-import { panelFieldBase } from '../panel/field'
+import { panelFieldBase } from '../panel/field/base'
 
 const numberFieldTheme = {
   slots: {
@@ -17,8 +17,9 @@ const numberFieldTheme = {
     suffix: 'shrink-0 pr-1.5 text-muted'
   },
   variants: {
+    /** A trailing control, such as the variable button, brings its own spacing after the unit. */
     suffix: {
-      true: { display: 'pr-0' },
+      true: { display: 'pr-0', suffix: 'pr-0.5' },
       false: { display: 'pr-1.5' }
     }
   }

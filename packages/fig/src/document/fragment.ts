@@ -1,8 +1,13 @@
-import type { GUID, NodeChange } from '@open-pencil/kiwi/fig/codec'
+import type { GUID } from '@open-pencil/kiwi/fig'
+import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
 import { guidToString } from '@open-pencil/kiwi/fig/guid'
 
 import { isUnsupportedFigFragmentType } from '../node-classification'
-import { materializeDocument, type DocumentAssemblyOptions } from './materialize'
+import {
+  materializeDocument,
+  type AssemblyState,
+  type DocumentAssemblyOptions
+} from './materialize'
 
 export interface FragmentOptions {
   /** Only empty instances with no saved claims may lose an unavailable component. */
@@ -13,12 +18,17 @@ export interface FragmentMaterializationOptions extends FragmentOptions {
   images?: DocumentAssemblyOptions['images']
 }
 
+export interface MaterializedFigFragment extends AssemblyState {
+  rootIds: string[]
+  dependencyPageIds: string[]
+}
+
 /** Interpret a partial document in isolation; retain internal resources separately from pasted roots. */
 export function materializeFigFragment(
   source: readonly NodeChange[],
   blobs: Uint8Array[] = [],
   options: FragmentMaterializationOptions = {}
-) {
+): MaterializedFigFragment {
   const changes = normalizeFigFragment(source, options)
   const result = materializeDocument(changes, blobs, {
     derivedBounds: true,

@@ -1,14 +1,21 @@
-import { tinykeys } from 'tinykeys'
+import { useEventListener } from '@vueuse/core'
+import { createKeybindingsHandler } from 'tinykeys'
 import type { KeyBindingMap } from 'tinykeys'
-import { onScopeDispose } from 'vue'
 
-import { editorCommandMetadata } from '@open-pencil/vue'
-import type { EditorCommandId } from '@open-pencil/vue'
+import { editorCommandMetadata, type EditorCommandId } from '@open-pencil/vue/editor/commands'
 
+import { isCloudBinding, openVersionDialog } from '@/app/cloud/integration'
+import { useComments } from '@/app/comments/use'
+import {
+  copySelectionProperties,
+  pasteClipboardProperties
+} from '@/app/editor/clipboard/properties'
 import { requestRenameSelection } from '@/app/editor/selection/rename-dialog'
 import { TOOL_SHORTCUTS } from '@/app/editor/session'
 import { openSettingsDialog } from '@/app/settings/dialog'
+import { setSnappingPreference } from '@/app/settings/preferences/apply'
 import { isButtonActivation, isEditing } from '@/app/shell/keyboard/focus'
+import { shortcutEvent } from '@/app/shell/keyboard/layout'
 import { bindSpaceHandTool } from '@/app/shell/keyboard/space-tool'
 import type {
   KeyboardShortcutOptions,
@@ -24,6 +31,8 @@ type ShortcutDefinition = {
   run: ShortcutAction
   shouldPreventDefault?: (event: KeyboardEvent) => boolean
   global?: boolean
+  /** Whether the shortcut also works while a canvas previews. */
+  preview?: boolean
 }
 
 function commandShortcut(
@@ -60,25 +69,63 @@ function opacityBindings(): ShortcutDefinition[] {
   }))
 }
 
+/**
+ * Tab steps through sibling layers only while nothing on the page holds focus, so it still
+ * moves focus through the panels' controls.
+ */
+function isCanvasFocus(event: KeyboardEvent) {
+  return event.target === document.body || event.target instanceof HTMLCanvasElement
+}
+
+function siblingShortcut(
+  command: 'selection.selectNextSibling' | 'selection.selectPreviousSibling'
+): ShortcutDefinition {
+  return {
+    id: command,
+    keys: editorCommandMetadata(command).keybinding ?? [],
+    run: ({ keyEvent, runCommand }) => {
+      if (isCanvasFocus(keyEvent)) runCommand(command)
+    },
+    shouldPreventDefault: isCanvasFocus
+  }
+}
+
 const EDITOR_SHORTCUT_OVERLAY_SELECTOR =
   '[data-picker-content], [role="dialog"], [role="listbox"], [role="menu"]'
+const PICKER_SELECTOR = '[data-picker-content]'
+const OPEN_LAYER_SELECTOR = '[data-dismissable-layer]:not([data-state="closed"])'
 
-function originatedInOverlay(event: KeyboardEvent) {
+function originatedInOverlay(event: KeyboardEvent, allowPickers = false) {
   return event
     .composedPath()
-    .some((target) => target instanceof Element && target.matches(EDITOR_SHORTCUT_OVERLAY_SELECTOR))
+    .some(
+      (target) =>
+        target instanceof Element &&
+        target.matches(EDITOR_SHORTCUT_OVERLAY_SELECTOR) &&
+        !(allowPickers && target.closest(PICKER_SELECTOR))
+    )
 }
 
 /** A popover, menu, or dialog that is open; one fading out after closing no longer counts. */
-function hasOpenDismissableLayer() {
-  return document.querySelector('[data-dismissable-layer]:not([data-state="closed"])') !== null
+function hasOpenDismissableLayer(allowPickers = false) {
+  return [...document.querySelectorAll(OPEN_LAYER_SELECTOR)].some(
+    (layer) => !(allowPickers && layer.closest(PICKER_SELECTOR))
+  )
 }
 
-function shouldIgnoreShortcut(event: KeyboardEvent, options: KeyboardShortcutOptions) {
+/**
+ * Other shortcuts wait for open popovers to close, but undo and redo work while a fill, stroke,
+ * or colour picker is open, as in Figma; a text field in it keeps its own undo.
+ */
+function shouldIgnoreShortcut(
+  event: KeyboardEvent,
+  options: KeyboardShortcutOptions,
+  history = false
+) {
   return (
     isButtonActivation(event) ||
-    hasOpenDismissableLayer() ||
-    originatedInOverlay(event) ||
+    hasOpenDismissableLayer(history) ||
+    originatedInOverlay(event, history) ||
     isEditing(event) ||
     options.inputFocused.value ||
     !!options.store.state.editingTextId ||
@@ -125,6 +172,16 @@ export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
       'selection.flipVertical'
     ),
     {
+      id: 'copy-properties',
+      keys: '$mod+Alt+KeyC',
+      run: ({ store }) => void copySelectionProperties(store)
+    },
+    {
+      id: 'paste-properties',
+      keys: '$mod+Alt+KeyV',
+      run: ({ store }) => void pasteClipboardProperties(store)
+    },
+    {
       id: 'export-selection-png',
       keys: appMenuTinykeysShortcut('export-selection') ?? '$mod+Shift+KeyE',
       run: ({ actions }) => actions.exportSelectionPNG()
@@ -134,13 +191,62 @@ export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
       keys: appMenuTinykeysShortcut('save-as') ?? '$mod+Shift+KeyS',
       run: ({ store }) => void store.saveFigFileAs()
     },
+    {
+      id: 'save-version',
+      keys: appMenuTinykeysShortcut('save-version') ?? '$mod+Alt+KeyS',
+      run: ({ store }) => {
+        if (isCloudBinding(store.getStorageBinding())) openVersionDialog(store)
+      }
+    },
     ...commandShortcuts('selection.ungroup', 'edit.redo'),
+    {
+      id: 'toggle-preview',
+      keys: appMenuTinykeysShortcut('toggle-preview') ?? '$mod+Alt+Enter',
+      run: ({ actions }) => actions.togglePlay(),
+      preview: true
+    },
+    {
+      id: 'toggle-rulers',
+      keys: 'Shift+KeyR',
+      run: ({ store }) => {
+        store.state.showRulers = !store.state.showRulers
+        store.requestRepaint()
+      }
+    },
+    {
+      id: 'toggle-multiplayer-cursors',
+      keys: '$mod+Alt+Backslash',
+      run: ({ store }) => {
+        store.state.showRemoteCursors = !store.state.showRemoteCursors
+        store.requestRepaint()
+      }
+    },
+    // Figma's keys, matched by key position since Shift turns ' into ".
+    {
+      id: 'toggle-pixel-grid',
+      keys: 'Shift+Quote',
+      run: ({ store }) => {
+        store.state.showPixelGrid = store.state.showPixelGrid === false
+        store.requestRepaint()
+      }
+    },
+    {
+      id: 'toggle-pixel-grid-snap',
+      keys: '$mod+Shift+Quote',
+      run: ({ store }) =>
+        setSnappingPreference('pixelGrid', !store.state.snappingPreferences.pixelGrid)
+    },
     {
       id: 'toggle-ui',
       keys: appMenuTinykeysShortcut('toggle-ui') ?? '$mod+Backslash',
       run: ({ actions }) => actions.toggleUI()
     },
     { id: 'toggle-ai', keys: '$mod+KeyJ', run: ({ actions }) => actions.toggleAI() },
+    {
+      id: 'toggle-comments',
+      keys: appMenuTinykeysShortcut('view-comments') ?? 'Shift+KeyC',
+      run: () => useComments().toggleOnCanvas()
+    },
     {
       id: 'open-settings',
       keys: appMenuTinykeysShortcut('settings') ?? '$mod+Comma',
@@ -185,6 +291,11 @@ export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
       'view.zoom100',
       'view.zoomFit',
       'view.zoomSelection',
+      'view.zoomNextFrame',
+      'view.zoomPreviousFrame',
+      'view.nextPage',
+      'view.previousPage',
+      'selection.selectParent',
       'selection.duplicate',
       'selection.selectAll',
       'selection.selectInverse'
@@ -214,13 +325,29 @@ export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
     { id: 'delete-backspace', keys: 'Backspace', run: ({ actions }) => actions.smartDelete(false) },
     { id: 'delete', keys: 'Delete', run: ({ actions }) => actions.smartDelete(false) },
     { id: 'delete-alt', keys: 'Alt+Delete', run: ({ actions }) => actions.smartDelete(true) },
-    { id: 'enter', keys: 'Enter', run: ({ actions }) => actions.confirmOrEnterText() },
-    { id: 'escape', keys: 'Escape', run: ({ actions }) => actions.escapeOrDeselect() },
+    { id: 'enter', keys: 'Enter', run: ({ actions }) => actions.confirmOrEditSelection() },
+    {
+      id: 'escape',
+      keys: 'Escape',
+      run: ({ actions }) => actions.escapeOrDeselect(),
+      preview: true
+    },
+    siblingShortcut('selection.selectNextSibling'),
+    siblingShortcut('selection.selectPreviousSibling'),
     ...opacityBindings()
   ]
 
   const bindings: KeyBindingMap = {}
   const globalBindings: KeyBindingMap = {}
+  /** Keys that keep working while a canvas previews; everything else would edit the design. */
+  const previewKeys = new Set(
+    shortcuts.filter((shortcut) => shortcut.preview).flatMap((shortcut) => [shortcut.keys].flat())
+  )
+  const historyKeys = new Set(
+    shortcuts
+      .filter((shortcut) => shortcut.id === 'edit.undo' || shortcut.id === 'edit.redo')
+      .flatMap((shortcut) => [shortcut.keys].flat())
+  )
   bindToolShortcuts(bindings, runOptions(new KeyboardEvent('keydown')))
 
   for (const shortcut of shortcuts) {
@@ -230,24 +357,24 @@ export function registerKeyboardShortcuts(options: KeyboardShortcutOptions) {
     })
   }
 
-  const unsubscribeEditor = tinykeys(
-    window,
+  const editorHandler = createKeybindingsHandler(
     Object.fromEntries(
       Object.entries(bindings).map(([keys, handler]) => [
         keys,
         (event: KeyboardEvent) => {
-          if (shouldIgnoreShortcut(event, options)) return
+          if (shouldIgnoreShortcut(event, options, historyKeys.has(keys))) return
+          if (options.store.state.play && !previewKeys.has(keys)) return
           handler(event)
         }
       ])
-    ),
-    { capture: true }
+    )
   )
+  const globalHandler = createKeybindingsHandler(globalBindings)
 
-  const unsubscribeGlobal = tinykeys(window, globalBindings, { capture: true })
-
-  onScopeDispose(() => {
-    unsubscribeEditor()
-    unsubscribeGlobal()
+  useEventListener(window, 'keydown', (event) => editorHandler(shortcutEvent(event)), {
+    capture: true
+  })
+  useEventListener(window, 'keydown', (event) => globalHandler(shortcutEvent(event)), {
+    capture: true
   })
 }

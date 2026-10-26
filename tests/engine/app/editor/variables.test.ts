@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ref } from 'vue'
 
-import type { Editor } from '@open-pencil/core/editor'
+import type { Editor } from '@open-pencil/core'
 import type { Variable, VariableCollection } from '@open-pencil/scene-graph'
 
 import { createVariableCollectionActions, createVariableValueActions } from '#vue/variables/helpers'
@@ -82,25 +82,6 @@ describe('variables editor helpers', () => {
       '',
       false
     ])
-  })
-
-  test('parses edited values by variable type', () => {
-    const { editor, collection } = createEditorHarness()
-    const actions = createVariableValueActions(editor, () => collection)
-    const variable = {
-      id: 'var:bool',
-      name: 'Flag',
-      type: 'BOOLEAN',
-      collectionId: collection.id,
-      valuesByMode: { default: false },
-      description: '',
-      hiddenFromPublishing: false
-    } satisfies Variable
-
-    expect(actions.parseVariableValue(variable, 'TRUE')).toBe(true)
-    expect(actions.parseVariableValue(variable, 'false')).toBe(false)
-    expect(actions.parseVariableValue({ ...variable, type: 'FLOAT' }, '12.5')).toBe(12.5)
-    expect(actions.parseVariableValue({ ...variable, type: 'STRING' }, 'hello')).toBe('hello')
   })
 
   test('creates and activates new collections', () => {

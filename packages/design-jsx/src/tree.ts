@@ -20,6 +20,14 @@ function inlineFragments(children: (TreeNode | string)[]): (TreeNode | string)[]
   )
 }
 
+/**
+ * The text an element holds as children, such as a sticky note's body or a connector's label.
+ * Elements among its children are not text and are skipped.
+ */
+export function plainTextOf(tree: TreeNode): string {
+  return tree.children.filter((child): child is string => typeof child === 'string').join('')
+}
+
 export function isTreeNode(x: unknown): x is TreeNode {
   if (x === null || typeof x !== 'object') return false
   return (
@@ -109,9 +117,9 @@ export type StyleProps = {
   columnGap?: number | DesignVariable
   justify?: 'start' | 'end' | 'center' | 'between'
   justifyContent?: 'start' | 'end' | 'center' | 'between'
-  items?: 'start' | 'end' | 'center' | 'stretch'
-  align?: 'start' | 'end' | 'center' | 'stretch'
-  alignItems?: 'start' | 'end' | 'center' | 'stretch'
+  items?: 'start' | 'end' | 'center' | 'stretch' | 'baseline'
+  align?: 'start' | 'end' | 'center' | 'stretch' | 'baseline'
+  alignItems?: 'start' | 'end' | 'center' | 'stretch' | 'baseline'
   grow?: number
 
   w?: number | 'fill' | 'hug' | DesignVariable
@@ -151,6 +159,10 @@ export type StyleProps = {
   mask?: boolean | 'alpha' | 'luminance' | 'vector'
   rotate?: number
   rotation?: number
+  /** Reflects the layer across its vertical centre line, before it turns. */
+  flipX?: boolean
+  /** Reflects the layer across its horizontal centre line, before it turns. */
+  flipY?: boolean
   overflow?: 'hidden' | 'visible'
   shadow?: string
   blur?: number
@@ -158,8 +170,10 @@ export type StyleProps = {
 
   size?: number | DesignVariable
   fontSize?: number | DesignVariable
-  lineHeight?: number | DesignVariable
-  letterSpacing?: number | DesignVariable
+  /** Pixels, or a percent of the font size such as `'150%'`. */
+  lineHeight?: number | `${number}%` | 'auto' | DesignVariable
+  /** Pixels, or a percent of the font size such as `'5%'`. */
+  letterSpacing?: number | `${number}%` | DesignVariable
   font?: string
   fontFamily?: string
   weight?: number | 'bold' | 'medium' | 'normal'
@@ -185,7 +199,53 @@ type NodeProps = StyleProps & {
 }
 
 export type BaseProps = NodeProps & { properties?: never }
+
+/** An `<Ellipse>`'s arc: angles in degrees, clockwise from three o'clock, and its hole. */
+export type EllipseProps = {
+  startAngle?: number
+  endAngle?: number
+  /** The hole as a share of the ellipse, from 0 (none) to 1. */
+  innerRadius?: number
+}
 export type TextProps = BaseProps
+
+/** A `<Span>`'s props: the character styles of `<Text>`, under the same names. */
+export type SpanProps = Pick<
+  StyleProps,
+  | 'size'
+  | 'fontSize'
+  | 'font'
+  | 'fontFamily'
+  | 'weight'
+  | 'fontWeight'
+  | 'color'
+  | 'fill'
+  | 'fills'
+  | 'lineHeight'
+  | 'letterSpacing'
+> & {
+  key?: string | number
+  style?: Record<string, unknown>
+  italic?: boolean
+  textDecoration?: 'none' | 'underline' | 'strikethrough'
+  textDecorationStyle?: 'solid' | 'dotted' | 'wavy'
+  textDecorationColor?: string | Color | Fill
+  textDecorationThickness?: number | 'auto'
+  textUnderlineOffset?: number | 'auto'
+  textDecorationSkipInk?: boolean
+  children?: unknown
+}
+
+/** A `<Paragraph>`'s props: a list item at `level` 1–5, or a plain paragraph, and its spacing. */
+export type ParagraphProps = {
+  key?: string | number
+  list?: 'ordered' | 'unordered'
+  level?: number
+  spacing?: number
+  listSpacing?: number
+  indent?: number
+  children?: unknown
+}
 
 export type ComponentProps = NodeProps & {
   properties?: SceneNode['componentPropertyDefinitions']

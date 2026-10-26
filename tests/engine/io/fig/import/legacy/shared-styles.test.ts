@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { materializeDocument } from '@open-pencil/fig'
 import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
+import { pixelLength } from '@open-pencil/scene-graph/text'
 
 import { canvas, doc, node } from './helpers'
 
@@ -63,7 +64,7 @@ describe('fig-import: shared styles', () => {
 
     const target = [...graph.getAllNodes()].find((item) => item.name === 'Styled target')
     const styleId = (name: string) =>
-      [...graph.getAllNodes()].find((node) => node.name === name)?.id
+      [...graph.getAllNodes()].find((node) => node.name === name)?.source.id
     expect(target).toMatchObject({
       fillStyleId: styleId('Brand/Fill'),
       strokeStyleId: styleId('Brand/Fill'),
@@ -72,7 +73,7 @@ describe('fig-import: shared styles', () => {
       gridStyleId: styleId('Grid/12 columns'),
       fontSize: 18,
       fontWeight: 700,
-      lineHeight: 26,
+      lineHeight: pixelLength(26),
       fills: [paint],
       effects: [effect],
       layoutGrids: [grid]

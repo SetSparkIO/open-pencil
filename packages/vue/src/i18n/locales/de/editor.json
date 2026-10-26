@@ -1,5 +1,17 @@
 {
   "toolOptions": "Optionen für {tool}",
   "removeGradientStop": "Farbverlaufspunkt entfernen",
-  "showUI": "UI anzeigen ({shortcut})"
+  "cornerRadius": "Radius",
+  "pointCount": "Anzahl",
+  "starRatio": "Verhältnis",
+  "arcStart": "Anfang",
+  "arcSweep": "Bogen",
+  "arcRatio": "Verhältnis",
+  "stickyPlaceholder": "Beliebigen Text eingeben, jemanden mit @ erwähnen",
+  "connectorLabelPlaceholder": "Text hinzufügen",
+  "showUI": "UI anzeigen ({shortcut})",
+  "previewing": "Vorschau",
+  "resetPreview": "Zurücksetzen",
+  "leavePreview": "Vorschau verlassen ({shortcut})",
+  "startPreview": "Vorschau ({shortcut})"
 }

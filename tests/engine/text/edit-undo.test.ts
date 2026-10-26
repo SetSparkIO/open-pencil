@@ -2,12 +2,12 @@ import { describe, test, expect } from 'bun:test'
 
 import type { CanvasKit } from 'canvaskit-wasm'
 
-import { SceneGraph, TextEditor, UndoManager } from '@open-pencil/core'
-import type { StyleRun } from '@open-pencil/core'
-import { createTextActions } from '@open-pencil/core/editor'
-import type { EditorContext, EditorState } from '@open-pencil/core/editor'
-import { getInstanceOverride } from '@open-pencil/scene-graph'
-import type { DerivedTextGlyph } from '@open-pencil/scene-graph'
+import { createTextActions, type EditorContext, type EditorState } from '@open-pencil/core'
+import { iconify } from '@open-pencil/core/icons'
+import { TextEditor } from '@open-pencil/core/text'
+import { SceneGraph, type StyleRun, type DerivedTextGlyph } from '@open-pencil/scene-graph'
+import { getInstanceOverride } from '@open-pencil/scene-graph/instances/overrides'
+import { UndoManager } from '@open-pencil/scene-graph/undo'
 
 import { fontManager } from '#core/text/fonts'
 
@@ -23,7 +23,8 @@ function setup() {
     editingTextId: null,
     currentPageId: pageId,
     renderVersion: 0,
-    sceneVersion: 0
+    sceneVersion: 0,
+    canvasVersion: 0
   } as EditorState
 
   const ctx: EditorContext = {
@@ -33,17 +34,24 @@ function setup() {
     requestRender: () => {
       state.renderVersion++
       state.sceneVersion++
+      state.canvasVersion++
     },
+    requestRefresh: () => {
+      state.sceneVersion++
+    },
+    getUserName: () => '',
     requestRepaint: () => {
       state.renderVersion++
     },
     getTextEditor: () => textEditor,
     getRenderer: () => null,
+    getRenderers: () => [],
     runLayoutForNode: () => undefined,
     runMutationWithLayout: async (operation) => operation(),
     getCk: () => null,
     loadFont: async () => null,
     getViewportSize: () => ({ width: 800, height: 600 }),
+    icons: iconify,
     subscribeToGraph: () => undefined,
     resolveFigmaClipboardImages: null,
     beginInteractiveEdit: () => () => undefined,
@@ -77,10 +85,10 @@ function straightTextPathNetwork() {
 }
 
 async function setupPathText() {
-  const font = await fontManager.fetchBundledFont('/Inter-Regular.ttf')
+  const font = await fontManager.fetchBundledFont('/InterVariable.ttf')
   expect(font).toBeTruthy()
   if (!font) return null
-  fontManager.markLoaded('Inter', 'Regular', font)
+  await fontManager.markLoaded('Inter', 'Regular', font)
 
   const setupResult = setup()
   const glyphs: DerivedTextGlyph[] = [
@@ -153,6 +161,42 @@ describe('text edit undo', () => {
 
     undo.redo()
     expect(getNodeOrThrow(graph, textNode.id).text).toBe('Hello World')
+  })
+
+  test('undoes a change made while editing on its own, then the typing before it', () => {
+    const { graph, undo, textEditor, textNode, actions } = setup()
+    const listed = [{ listType: 'ORDERED' as const, indentation: 1 }]
+    const read = () => getNodeOrThrow(graph, textNode.id)
+    actions.startTextEditing(textNode.id)
+    textEditor.insert(' World', textNode)
+    graph.updateNode(textNode.id, {
+      text: expectDefined(textEditor.state, 'text editor state').text
+    })
+
+    // A list shortcut while editing, recorded the way updateNodeWithUndo records it.
+    actions.runTextEditStep(() => {
+      graph.updateNode(textNode.id, { textParagraphs: listed })
+      undo.push({
+        label: 'Change list style',
+        forward: () => graph.updateNode(textNode.id, { textParagraphs: listed }),
+        inverse: () => graph.updateNode(textNode.id, { textParagraphs: [] })
+      })
+    })
+    expect(undo.undoLabel).toBe('Change list style')
+
+    actions.runTextEditStep(() => undo.undo())
+    expect(read().textParagraphs).toEqual([])
+    expect(read().text).toBe('Hello World')
+    expect(textEditor.isActive).toBe(true)
+
+    actions.runTextEditStep(() => undo.undo())
+    expect(read().text).toBe('Hello')
+    expect(textEditor.state?.text).toBe('Hello')
+
+    // Nothing changed since the last undo, so leaving the edit records nothing more.
+    actions.commitTextEdit()
+    expect(undo.canUndo).toBe(false)
+    expect(undo.canRedo).toBe(true)
   })
 
   test('reflows live path-text edits and restores glyphs through undo and redo', async () => {
@@ -437,6 +481,99 @@ describe('text edit undo', () => {
     actions.startTextEditing(textNode.id)
     actions.commitTextEdit()
 
+    expect(undo.canUndo).toBe(false)
+  })
+})
+
+describe('editing text a component property drives', () => {
+  function boundComponent(graph: SceneGraph) {
+    const page = graph.getPages()[0]
+    const component = graph.createNode('COMPONENT', page.id, {
+      width: 100,
+      height: 40,
+      componentPropertyDefinitions: [
+        { id: '10:1', name: 'Label', type: 'TEXT', defaultValue: 'Buy' }
+      ]
+    })
+    const reference = [{ propertyId: '10:1', field: 'TEXT' as const }]
+    const label = graph.createNode('TEXT', component.id, {
+      text: 'Buy',
+      width: 100,
+      height: 20,
+      componentPropertyReferences: reference
+    })
+    const caption = graph.createNode('TEXT', component.id, {
+      text: 'Buy',
+      width: 100,
+      height: 20,
+      componentPropertyReferences: reference
+    })
+    return { page, component, label, caption }
+  }
+
+  test('in the main component, the text becomes the default every linked layer shows', () => {
+    const { graph, undo, textEditor, actions } = setup()
+    const { component, label, caption } = boundComponent(graph)
+
+    actions.startTextEditing(label.id)
+    textEditor.insert(' now', label)
+    actions.commitTextEdit()
+
+    const definition = () => getNodeOrThrow(graph, component.id).componentPropertyDefinitions[0]
+    expect(definition()?.defaultValue).toBe('Buy now')
+    expect(getNodeOrThrow(graph, caption.id).text).toBe('Buy now')
+
+    undo.undo()
+    expect(definition()?.defaultValue).toBe('Buy')
+    expect(getNodeOrThrow(graph, label.id).text).toBe('Buy')
+    expect(getNodeOrThrow(graph, caption.id).text).toBe('Buy')
+    expect(undo.canUndo).toBe(false)
+  })
+
+  test("in an instance, the text becomes that instance's value for the property", () => {
+    const { graph, undo, textEditor, actions } = setup()
+    const { page, component } = boundComponent(graph)
+    const instance = expectDefined(graph.createInstance(component.id, page.id), 'instance')
+    const [label, caption] = instance.childIds.map((id) => getNodeOrThrow(graph, id))
+
+    actions.startTextEditing(label.id)
+    textEditor.insert(' later', label)
+    actions.commitTextEdit()
+
+    expect(getNodeOrThrow(graph, instance.id).componentPropertyAssignments['10:1']).toBe(
+      'Buy later'
+    )
+    expect(getNodeOrThrow(graph, caption.id).text).toBe('Buy later')
+    expect(getNodeOrThrow(graph, component.id).componentPropertyDefinitions[0]?.defaultValue).toBe(
+      'Buy'
+    )
+
+    undo.undo()
+    expect(getNodeOrThrow(graph, instance.id).componentPropertyAssignments).toEqual({})
+    expect(getNodeOrThrow(graph, label.id).text).toBe('Buy')
+    expect(getNodeOrThrow(graph, caption.id).text).toBe('Buy')
+  })
+
+  test('typing over text a variable decides lets go of the variable in the same step', () => {
+    const { graph, undo, textEditor, textNode, actions } = setup()
+    const collection = graph.createCollection('Copy')
+    const count = graph.createVariable('count', 'FLOAT', collection.id, 3)
+    graph.bindVariable(textNode.id, 'text', count.id)
+    graph.updateNode(textNode.id, { text: '3' })
+
+    actions.startTextEditing(textNode.id)
+    textEditor.insert(' items', getNodeOrThrow(graph, textNode.id))
+    actions.commitTextEdit()
+
+    expect(getNodeOrThrow(graph, textNode.id)).toMatchObject({
+      text: '3 items',
+      boundVariables: {}
+    })
+    undo.undo()
+    expect(getNodeOrThrow(graph, textNode.id)).toMatchObject({
+      text: '3',
+      boundVariables: { text: count.id }
+    })
     expect(undo.canUndo).toBe(false)
   })
 })

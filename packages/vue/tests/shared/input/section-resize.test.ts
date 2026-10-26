@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createEditor } from '@open-pencil/core/editor'
+import { createEditor } from '@open-pencil/core'
 
 import { applyResize, commitResizePreview } from '#vue/shared/input/resize'
 import type { DragResize } from '#vue/shared/input/types'
@@ -31,6 +31,7 @@ describe('section resize', () => {
         origStrokes: [],
         origTextPathData: null,
         origTextPathBox: null,
+        lockedAspectRatio: null,
         origChildren: null
       }
 

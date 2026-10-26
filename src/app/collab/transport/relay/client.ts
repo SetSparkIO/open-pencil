@@ -9,6 +9,9 @@ import { PEER_ID_BYTES, decodeFrame, encodeFrame, isRelayRoomId, type RelayFrame
 /** The relay closes with this code when the hello is malformed; retrying cannot help. */
 export const RELAY_CLOSE_REFUSED = 4400
 
+/** Peers already in the room answer a hello through the relay within one round trip. */
+const RELAY_DISCOVERY_MS = 2000
+
 export interface RelayClientOptions {
   /** `ws:` or `wss:` URL of the relay. */
   url: string
@@ -78,6 +81,7 @@ export function joinRelayCollabRoom(
   let joinHandler: ((peerId: string) => void) | null = null
   let leaveHandler: ((peerId: string) => void) | null = null
   let socket: WebSocket | null = null
+  let socketAccepted = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let attempt = 0
   let lastFrameAt = 0
@@ -129,6 +133,7 @@ export function joinRelayCollabRoom(
   function lose(ws: WebSocket, code?: number) {
     if (socket !== ws) return
     socket = null
+    socketAccepted = false
     ping.pause()
     for (const id of peers) removePeer(id)
     assembler.clear()
@@ -191,6 +196,7 @@ export function joinRelayCollabRoom(
       // outage it is part of; only a socket the relay took ends them.
       if (!accepted) {
         accepted = true
+        socketAccepted = true
         attempt = 0
         outageReported = false
       }
@@ -249,6 +255,11 @@ export function joinRelayCollabRoom(
     },
     onPeerLeave(handler) {
       leaveHandler = handler
-    }
+    },
+    // The relay is the service that introduces peers, so it counts once it has taken the socket.
+    signalingConnected: () => socketAccepted && socket?.readyState === WebSocket.OPEN,
+    discoveryMs: RELAY_DISCOVERY_MS,
+    // The relay carries actions only; a call over it has no audio.
+    media: null
   }
 }

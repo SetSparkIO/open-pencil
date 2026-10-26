@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { colorToCSS } from '@open-pencil/scene-graph/color'
-import { fromPercent, toPercent, useI18n } from '@open-pencil/vue'
+import { fromPercent, toPercent } from '@open-pencil/vue/controls/color-model'
+import { useI18n } from '@open-pencil/vue/i18n'
 
 import { useColorPickerPanelContext } from '@/components/color-picker-panel/context'
 import OkhclChannelSlider from '@/components/color-picker-panel/OkhclChannelSlider.vue'
@@ -92,7 +93,7 @@ const percentText = (value: number) => `${Math.round(toPercent(value))}%`
         {{ ctx.okhcl.previewColorSpace }}
       </span>
     </div>
-    <p v-if="ctx.okhcl.clipped" class="text-[10px] leading-4 text-[var(--color-warning-text)]">
+    <p v-if="ctx.okhcl.clipped" class="text-[10px] leading-4 text-warning">
       {{ ctx.panels.colorPreviewClipped({ space: ctx.okhcl.previewColorSpace ?? 'display-p3' }) }}
     </p>
   </div>

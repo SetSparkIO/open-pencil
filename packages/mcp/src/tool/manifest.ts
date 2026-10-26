@@ -1,12 +1,7 @@
-import type { ToolDef } from '@open-pencil/core/tools'
+import type { ToolCapability, ToolDef } from '@open-pencil/core/tools'
 import { ALL_TOOLS, toolChangesDocument, isToolExposed } from '@open-pencil/core/tools'
 
-import type {
-  ToolAvailability,
-  ToolCapability,
-  ToolDescriptor,
-  ToolEffect
-} from '#mcp/tool/metadata'
+import type { ToolAvailability, ToolDescriptor, ToolEffect } from '#mcp/tool/metadata'
 
 export function coreToolEffect(def: ToolDef): ToolEffect {
   return toolChangesDocument(def) ? 'write' : 'read'
@@ -67,6 +62,15 @@ export function createToolDescriptors(filesystemEnabled: boolean): ToolDescripto
             enabled: true
           } satisfies ToolDescriptor,
           {
+            name: 'list_recent_files',
+            description:
+              'List recently opened design files inside the configured MCP root, newest first, with their paths, names, and when they were last opened. Reopen one with open_file.',
+            effect: 'read',
+            availability: 'filesystem',
+            capabilities: ['filesystem:read'],
+            enabled: true
+          } satisfies ToolDescriptor,
+          {
             name: 'new_document',
             description:
               'Create a new empty document with an optional save path inside the configured MCP root.',
@@ -116,7 +120,7 @@ export function createToolDescriptors(filesystemEnabled: boolean): ToolDescripto
     {
       name: 'get_settings',
       description:
-        'Read editor settings: appearance (theme, language, animations), snapping, canvas rendering, recovery, AI chat, and design check preferences.',
+        'Read editor settings: appearance (theme, language, animations, accent color), snapping, canvas rendering, recovery, AI chat, and design check preferences.',
       effect: 'read',
       availability: 'default',
       capabilities: ['settings:read'],

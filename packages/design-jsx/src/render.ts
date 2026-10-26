@@ -1,39 +1,61 @@
 import { uniq } from 'es-toolkit/array'
-import { transform } from 'sucrase'
 
 import type { SceneGraph } from '@open-pencil/scene-graph'
 
+import { REKA_ELEMENTS } from './behaviours'
+import { elementBindings, elementProps, elementSchema } from './elements'
+import { ENUM_PROPS } from './enums'
 import { designJSXHelpers } from './helpers'
 import * as React from './mini-react'
-import { renderRoots, renderTree, type RenderResult } from './renderer'
-import { DESIGN_JSX_SUPPORTED_PROPERTIES } from './schema'
+import { renderRoots, renderTree, componentPropNames, type RenderResult } from './renderer'
+import { elementPropWarnings } from './schema'
 import type { DesignJSXServices } from './services'
+import { TEXT_CONTENT_NAMES } from './text-content'
+import { transformDesignJSXExpression } from './transform'
 import { isTreeNode, resolveToTree, type TreeNode } from './tree'
 import type { RenderOptions as RenderJSXOptions } from './types'
 
-/**
- * Build a component function from a JSX string using sucrase.
- * Works in both Node/Bun and the browser (no native bindings).
- */
-const SUPPORTED_PROPS = DESIGN_JSX_SUPPORTED_PROPERTIES
+/** `const Switch = { Root: 'Switch.Root', … }`: each Reka namespace as element types. */
+const REKA_ALIASES = Object.entries(REKA_ELEMENTS)
+  .map(
+    ([namespace, parts]) =>
+      `const ${namespace} = ${JSON.stringify(
+        Object.fromEntries(Object.keys(parts).map((part) => [part, `${namespace}.${part}`]))
+      )}`
+  )
+  .join('\n')
 
 function stripHTMLComments(jsxString: string): string {
   return jsxString.replace(/<!--[\s\S]*?-->/g, '')
 }
 
-function unsupportedPropWarnings(tree: TreeNode): string[] {
+function unsupportedPropWarnings(graph: SceneGraph, tree: TreeNode): string[] {
   const warnings: string[] = []
-  collectUnsupportedPropWarnings(tree, warnings)
+  collectUnsupportedPropWarnings(graph, tree, warnings)
   return warnings
 }
 
-const SVG_ROOT_PROPS = new Set([...SUPPORTED_PROPS, 'viewBox', 'body'])
-
-function collectUnsupportedPropWarnings(tree: TreeNode, warnings: string[]): void {
-  const supportedProps = tree.type === 'svg' ? SVG_ROOT_PROPS : SUPPORTED_PROPS
-  for (const key of Object.keys(tree.props)) {
-    if (!supportedProps.has(key)) {
-      warnings.push(`Unsupported prop "${key}" on <${tree.type}> is ignored.`)
+function collectUnsupportedPropWarnings(
+  graph: SceneGraph,
+  tree: TreeNode,
+  warnings: string[]
+): void {
+  const supported = elementProps(tree.type)
+  // An instance sets its component's properties by name, such as `State="On"` or `Title="Hi"`.
+  const properties = componentPropNames(graph, tree.props)
+  const element = TEXT_CONTENT_NAMES[tree.type] ?? tree.type
+  const schema = elementSchema(tree.type)
+  if (schema) warnings.push(...elementPropWarnings(schema, tree.props, element))
+  for (const [key, value] of Object.entries(tree.props)) {
+    if (!supported.has(key) && !properties.includes(key)) {
+      warnings.push(`Unsupported prop "${key}" on <${element}> is ignored.`)
+      continue
+    }
+    const values = ENUM_PROPS[key]
+    if (values && typeof value === 'string' && values.parse(value) === undefined) {
+      warnings.push(
+        `Unknown ${key} "${value}" on <${element}> is ignored; expected ${values.names.join(', ')}.`
+      )
     }
   }
 
@@ -41,33 +63,37 @@ function collectUnsupportedPropWarnings(tree: TreeNode, warnings: string[]): voi
   if (tree.type === 'svg') return
 
   for (const child of tree.children) {
-    if (isTreeNode(child)) collectUnsupportedPropWarnings(child, warnings)
+    if (isTreeNode(child)) collectUnsupportedPropWarnings(graph, child, warnings)
   }
 }
 
+/**
+ * Build a component function from a JSX string: one JSX expression, sibling elements, or
+ * statements that end with `return` and the JSX. The statements run inside the component, so
+ * they may shadow an element or helper name. Works in both Node/Bun and the browser.
+ */
 export function buildComponent(jsxString: string, warnings: string[] = []): React.ComponentType {
   const trimmed = stripHTMLComments(jsxString).trim()
 
   const aliases = `
     const __h = React.createElement
-    const __frag = ''
-    const Frame = 'frame', Text = 'text', Rectangle = 'rectangle', Ellipse = 'ellipse'
-    const Line = 'line', Star = 'star', Polygon = 'polygon', Vector = 'vector'
-    const Group = 'group', Section = 'section', View = 'frame', Rect = 'rectangle'
-    const Component = 'component', ComponentSet = 'component-set', Instance = 'instance'
-    const Icon = 'icon'
+    const __fragment = ''
+    ${elementBindings()}
     const svg = 'svg'
+    ${REKA_ALIASES}
     const dropShadow = __helpers.dropShadow
     const innerShadow = __helpers.innerShadow
     const layerBlur = __helpers.layerBlur
     const backgroundBlur = __helpers.backgroundBlur
     const foregroundBlur = __helpers.foregroundBlur
     const solid = __helpers.solid
+    const shader = __helpers.shader
     const gradient = __helpers.gradient
     const linearGradient = __helpers.linearGradient
     const radialGradient = __helpers.radialGradient
     const angularGradient = __helpers.angularGradient
     const diamondGradient = __helpers.diamondGradient
+    const ref = __helpers.ref
     const __varSymbol = Symbol.for('open-pencil.variable')
     const designVar = (def, value) => typeof def === 'string'
       ? ({ [__varSymbol]: true, id: def, name: def, value })
@@ -76,22 +102,10 @@ export function buildComponent(jsxString: string, warnings: string[] = []): Reac
       Object.entries(vars).map(([key, def]) => [key, designVar(def)])
     )
   `
-  const opts = {
-    transforms: ['typescript', 'jsx'] as Array<'typescript' | 'jsx'>,
-    jsxPragma: '__h',
-    jsxFragmentPragma: '__frag',
-    production: true
-  }
 
-  let code: string
-  try {
-    code = transform(`${aliases}\nreturn function __render() { return ${trimmed} }`, opts).code
-  } catch {
-    code = transform(`${aliases}\nreturn function __render() { return <>${trimmed}</> }`, opts).code
-  }
-
+  const body = transformDesignJSXExpression(trimmed)
   // eslint-disable-next-line typescript-eslint/no-implied-eval -- sucrase output must be evaluated at runtime
-  return new Function('React', '__helpers', code)(
+  return new Function('React', '__helpers', `${aliases}\nreturn function __render() {\n${body}\n}`)(
     React,
     designJSXHelpers(warnings)
   ) as React.ComponentType
@@ -116,10 +130,15 @@ async function renderJSX<Artwork>(
     throw new Error('JSX must return a Figma element (Frame, Text, etc)')
   }
 
-  // A helper called in a loop reports each ignored option once.
-  const warnings = uniq([...unsupportedPropWarnings(tree), ...helperWarnings])
-
   const results = await renderRoots(services, graph, tree, options)
+  // After rendering, so an instance's component set drawn in the same JSX names its variants.
+  // A helper called in a loop reports each ignored option once.
+  // Prop warnings come first, then the render's own, such as a connector end naming no layer.
+  const warnings = uniq([
+    ...unsupportedPropWarnings(graph, tree),
+    ...helperWarnings,
+    ...(results[0].warnings ?? [])
+  ])
   if (warnings.length > 0) results[0].warnings = warnings
   return results
 }

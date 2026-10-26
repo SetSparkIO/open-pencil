@@ -2,13 +2,17 @@ import { ref } from 'vue'
 
 export type SettingsSection =
   | 'general'
+  | 'toolbar'
   | 'ai'
   | 'usage'
   | 'diagnostics'
+  | 'privacy'
   | 'mcp'
   | 'tools'
+  | 'fonts'
   | 'media'
   | 'storage'
+  | 'cloud'
 
 export const settingsDialogOpen = ref(false)
 export const settingsDialogSection = ref<SettingsSection>('general')

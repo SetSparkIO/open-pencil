@@ -4,14 +4,14 @@ import { expect, userEvent, waitFor, within } from 'storybook/test'
 import Picker from './examples/Picker.vue'
 
 const meta = {
-  title: 'Design System/Picker',
+  title: 'Design System/Selection/Picker',
   component: Picker,
   tags: ['autodocs'],
   parameters: {
     docs: {
       description: {
         component:
-          'A searchable, grouped list that opens beside the properties panel. Comfortable rows carry a thumbnail and a description; compact rows suit plain names such as variables.'
+          'A searchable, grouped list that opens beside the properties panel. Comfortable rows carry a thumbnail and a description; compact rows suit plain names such as variables; the grid shows thumbnails alone, naming the highlighted one in the footer.'
       }
     }
   }
@@ -57,5 +57,18 @@ export const CompactWithFooter: Story = {
     await waitFor(() =>
       expect(page.getByRole('button', { name: /Create number variable/ })).toBeVisible()
     )
+  }
+}
+
+export const Grid: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const page = within(canvasElement.ownerDocument.body)
+    await userEvent.click(canvas.getByRole('button', { name: 'Insert shape' }))
+    const search = await page.findByPlaceholderText('Search shapes')
+    await waitFor(() => expect(search).toHaveFocus())
+    // The first shape is highlighted on opening; down moves a row of eight, to the ninth.
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+    await waitFor(() => expect(canvas.getByText(/^Chosen:/)).toHaveTextContent('Chosen: star'))
   }
 }

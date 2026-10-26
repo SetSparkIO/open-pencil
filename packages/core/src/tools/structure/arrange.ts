@@ -1,8 +1,7 @@
 import * as v from 'valibot'
 
 import type { FigmaNodeProxy } from '#core/figma-api'
-import { toolNumber } from '#core/tools/input'
-import { defineTool } from '#core/tools/schema'
+import { toolNumber, defineTool } from '#core/tools/schema'
 
 export const arrangeNodes = defineTool({
   name: 'arrange',
@@ -10,7 +9,7 @@ export const arrangeNodes = defineTool({
   description:
     'Arrange top-level nodes on the canvas in a grid, row, or column layout. Useful after batch creation to tidy up overlapping frames.',
   execution: { kind: 'sync', mutation: 'document' },
-  input: v.object({
+  input: v.strictObject({
     ids: v.optional(
       v.pipe(
         v.array(v.string()),

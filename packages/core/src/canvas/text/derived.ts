@@ -1,36 +1,46 @@
-import type { Canvas, Paint, Path } from 'canvaskit-wasm'
+import type { Canvas, Path } from 'canvaskit-wasm'
 import { fromUint8Array } from 'js-base64'
 
-import type {
-  Color,
-  Fill,
-  DerivedTextGlyph,
-  SceneNode,
-  Stroke,
-  StyleRun,
-  TextDecorationStyle
-} from '@open-pencil/scene-graph'
+import type { Fill, DerivedTextGlyph, SceneNode, Stroke } from '@open-pencil/scene-graph'
+import { isGradientFill } from '@open-pencil/scene-graph/gradient'
+import type { Color } from '@open-pencil/scene-graph/primitives'
+import {
+  hasTextList,
+  textListItems,
+  textParagraphRanges,
+  type TextParagraphRange
+} from '@open-pencil/scene-graph/text'
 
-import { ResourceCache } from '#core/cache/resource'
+import type { ResourceCache } from '#core/cache/resource'
+import { createPathCache } from '#core/canvas/paths/cache'
 import type { SkiaRenderer } from '#core/canvas/renderer'
+import {
+  drawTextDecorations,
+  hasDecoration,
+  savedTextDecorationRects
+} from '#core/canvas/text/decorations'
 import { geometryBlobToPath } from '#core/vector'
 
 const MAX_GLYPH_SILHOUETTES = 512
+/** Saved glyphs a renderer keeps decoded: every text on a page of saved text redraws at once. */
+const MAX_DERIVED_GLYPH_PATHS = 16384
+
+/** Decoded saved glyph outlines, by the glyph's command bytes, which a node keeps until it changes. */
+export function createDerivedGlyphPathCache(): ResourceCache<Uint8Array, Path> {
+  return createPathCache({ maxEntries: MAX_DERIVED_GLYPH_PATHS })
+}
+
+/** A saved glyph's outline, decoded once and borrowed from the renderer's cache. */
+function derivedGlyphPath(r: SkiaRenderer, blob: Uint8Array): Path {
+  const cached = r.derivedGlyphPathCache.get(blob)
+  if (cached) return cached
+  const path = geometryBlobToPath(r.ck, blob, 'NONZERO')
+  r.derivedGlyphPathCache.set(blob, path)
+  return path
+}
 
 export function createGlyphSilhouetteCache(): ResourceCache<string, Path> {
-  return new ResourceCache({ maxEntries: MAX_GLYPH_SILHOUETTES, dispose: (path) => path.delete() })
-}
-
-interface DecorationRange {
-  x1: number
-  x2: number
-}
-
-interface DecorationSpan extends DecorationRange {
-  style: TextDecorationStyle
-  thickness: number
-  offset: number
-  fills: Fill[]
+  return createPathCache({ maxEntries: MAX_GLYPH_SILHOUETTES })
 }
 
 export function snapDerivedGlyphBaseline(y: number): number {
@@ -41,192 +51,6 @@ export function shouldUseHardDerivedGlyphCoverage(
   node: Pick<SceneNode, 'fontSize' | 'fontWeight'>
 ): boolean {
   return node.fontSize === 20 && node.fontWeight === 400
-}
-
-export function derivedUnderlineRect(node: Pick<SceneNode, 'width'>, baselineY: number) {
-  return {
-    x1: 0,
-    y1: baselineY + 2.75,
-    x2: Math.max(0, node.width - 0.75),
-    y2: baselineY + 3.75
-  }
-}
-
-function styleRunX(node: SceneNode, index: number): number {
-  const glyph = node.derivedTextGlyphs?.[index]
-  if (glyph) return glyph.x
-  if (index >= node.text.length) return node.width
-  if (node.text.length === 0) return 0
-  return (node.width * index) / node.text.length
-}
-
-function styleRunDecorationRange(node: SceneNode, run: StyleRun): DecorationRange | null {
-  const hasDecorationOverride =
-    run.style.textDecoration !== undefined ||
-    run.style.textDecorationStyle !== undefined ||
-    run.style.textDecorationThickness !== undefined ||
-    run.style.textDecorationFills !== undefined ||
-    run.style.textUnderlineOffset !== undefined
-  if (!hasDecorationOverride) return null
-  return {
-    x1: styleRunX(node, run.start),
-    x2: styleRunX(node, run.start + run.length)
-  }
-}
-
-function styleRunDecorationSpan(node: SceneNode, run: StyleRun): DecorationSpan | null {
-  const decoration = run.style.textDecoration ?? node.textDecoration
-  const hasDecorationOverride =
-    run.style.textDecoration !== undefined ||
-    run.style.textDecorationStyle !== undefined ||
-    run.style.textDecorationThickness !== undefined ||
-    run.style.textDecorationFills !== undefined ||
-    run.style.textUnderlineOffset !== undefined
-  if (decoration !== 'UNDERLINE' || !hasDecorationOverride) return null
-  return {
-    x1: styleRunX(node, run.start),
-    x2: styleRunX(node, run.start + run.length),
-    style: run.style.textDecorationStyle ?? node.textDecorationStyle,
-    thickness: run.style.textDecorationThickness ?? node.textDecorationThickness ?? 1,
-    offset: run.style.textUnderlineOffset ?? node.textUnderlineOffset ?? 0,
-    fills: run.style.textDecorationFills ?? node.textDecorationFills
-  }
-}
-
-function isDecorationRange(span: DecorationRange | null): span is DecorationRange {
-  return span !== null
-}
-
-function isDecorationSpan(span: DecorationSpan | null): span is DecorationSpan {
-  return span !== null
-}
-
-function baseDecorationSpan(node: SceneNode): DecorationSpan | null {
-  if (node.textDecoration !== 'UNDERLINE') return null
-  const rect = derivedUnderlineRect(node, 0)
-  return {
-    x1: rect.x1,
-    x2: rect.x2,
-    style: node.textDecorationStyle,
-    thickness: node.textDecorationThickness ?? rect.y2 - rect.y1,
-    offset: node.textUnderlineOffset ?? 0,
-    fills: node.textDecorationFills
-  }
-}
-
-function splitBaseDecorationSpan(
-  base: DecorationSpan,
-  overrides: DecorationRange[]
-): DecorationSpan[] {
-  const spans: DecorationSpan[] = []
-  let cursor = base.x1
-  for (const override of overrides.toSorted((a, b) => a.x1 - b.x1)) {
-    if (override.x1 > cursor) spans.push({ ...base, x1: cursor, x2: override.x1 })
-    cursor = Math.max(cursor, override.x2)
-  }
-  if (cursor < base.x2) spans.push({ ...base, x1: cursor, x2: base.x2 })
-  return spans
-}
-
-function derivedDecorationSpans(node: SceneNode): DecorationSpan[] {
-  const overrideRanges = node.styleRuns
-    .map((run) => styleRunDecorationRange(node, run))
-    .filter(isDecorationRange)
-  const overrides = node.styleRuns
-    .map((run) => styleRunDecorationSpan(node, run))
-    .filter(isDecorationSpan)
-  const base = baseDecorationSpan(node)
-  return base ? [...splitBaseDecorationSpan(base, overrideRanges), ...overrides] : overrides
-}
-
-function firstVisibleFillColor(fills: Fill[]) {
-  const fill = fills.find((item) => item.visible && item.type === 'SOLID')
-  return fill?.color ?? null
-}
-
-function configureDecorationPaint(r: SkiaRenderer, span: DecorationSpan, paint: Paint): void {
-  const color = firstVisibleFillColor(span.fills)
-  if (color)
-    paint.setColor(r.ck.Color4f(color.r, color.g, color.b, color.a * (span.fills[0]?.opacity ?? 1)))
-  else paint.setColor(r.fillPaint.getColor())
-  paint.setAntiAlias(true)
-  paint.setStyle(r.ck.PaintStyle.Stroke)
-  paint.setStrokeWidth(span.thickness)
-}
-
-function drawSolidDecoration(
-  r: SkiaRenderer,
-  canvas: Canvas,
-  paint: Paint,
-  span: DecorationSpan,
-  y: number
-): void {
-  paint.setStyle(r.ck.PaintStyle.Fill)
-  canvas.drawRect(r.ltrb(span.x1, y, span.x2, y + span.thickness), paint)
-}
-
-function drawDottedDecoration(
-  r: SkiaRenderer,
-  canvas: Canvas,
-  paint: Paint,
-  span: DecorationSpan,
-  y: number
-): void {
-  paint.setStyle(r.ck.PaintStyle.Fill)
-  const dotSize = 1
-  const step = dotSize * 2
-  const dotY = y - span.thickness / 3
-  for (let x = span.x1; x <= span.x2; x += step) {
-    canvas.drawRect(r.ck.LTRBRect(x, dotY, x + dotSize, dotY + span.thickness), paint)
-  }
-}
-
-function drawWavyDecoration(
-  r: SkiaRenderer,
-  canvas: Canvas,
-  paint: Paint,
-  span: DecorationSpan,
-  y: number
-): void {
-  const amplitude = Math.max(0.5, span.thickness * 0.5)
-  const wavelength = Math.max(6, span.thickness * 5)
-  const path = new r.ck.PathBuilder()
-  path.moveTo(span.x1, y)
-  for (let x = span.x1; x <= span.x2; x += 2) {
-    path.lineTo(x, y + Math.sin(((x - span.x1) / wavelength) * Math.PI * 2) * amplitude)
-  }
-  path.lineTo(span.x2, y)
-  const immutablePath = path.detachAndDelete()
-  canvas.drawPath(immutablePath, paint)
-  immutablePath.delete()
-}
-
-function derivedDecorationY(node: SceneNode, span: DecorationSpan, baselineY: number): number {
-  const hasRichDecoration = span.style !== 'SOLID' || span.fills.length > 0
-  if (!hasRichDecoration) return derivedUnderlineRect(node, baselineY).y1 + span.offset
-  return baselineY + node.fontSize / 2 - span.thickness / 4 + span.offset
-}
-
-function drawDerivedDecorations(
-  r: SkiaRenderer,
-  canvas: Canvas,
-  node: SceneNode,
-  baselineY: number
-): void {
-  const spans = derivedDecorationSpans(node)
-  if (spans.length === 0) return
-  const paint = new r.ck.Paint()
-  try {
-    for (const span of spans) {
-      const y = derivedDecorationY(node, span, baselineY)
-      configureDecorationPaint(r, span, paint)
-      if (span.style === 'DOTTED') drawDottedDecoration(r, canvas, paint, span, y)
-      else if (span.style === 'WAVY') drawWavyDecoration(r, canvas, paint, span, y)
-      else drawSolidDecoration(r, canvas, paint, span, y)
-    }
-  } finally {
-    paint.delete()
-  }
 }
 
 /**
@@ -312,14 +136,40 @@ function getGlyphSilhouette(
  * font-units→px (Y-flipped). The fill and silhouette passes share it so they
  * stay registered; see drawDerivedText for the order rationale.
  */
-function applyGlyphEmTransform(canvas: Canvas, glyph: DerivedTextGlyph, glyphY: number): void {
+/** Moves to a saved glyph's pen position, in pixels: its baseline, resize scale, and rotation. */
+export function applyGlyphTransform(canvas: Canvas, glyph: DerivedTextGlyph, glyphY: number): void {
   canvas.translate(glyph.x, glyphY)
   const scaleX = glyph.scaleX ?? 1
   const scaleY = glyph.scaleY ?? 1
   if (scaleX !== 1 || scaleY !== 1) canvas.scale(scaleX, scaleY)
   const rotation = glyph.rotation ?? 0
   if (rotation !== 0) canvas.rotate((-rotation * 180) / Math.PI, 0, 0)
+}
+
+function applyGlyphEmTransform(canvas: Canvas, glyph: DerivedTextGlyph, glyphY: number): void {
+  applyGlyphTransform(canvas, glyph, glyphY)
   canvas.scale(glyph.fontSize, -glyph.fontSize)
+}
+
+/** The outline moved by the transform `applyGlyphEmTransform` applies to the canvas. */
+function layerSpaceGlyphPath(
+  r: SkiaRenderer,
+  path: Path,
+  glyph: DerivedTextGlyph,
+  glyphY: number
+): Path {
+  const { Matrix } = r.ck
+  const builder = new r.ck.PathBuilder()
+  builder.addPath(
+    path,
+    Matrix.multiply(
+      Matrix.translated(glyph.x, glyphY),
+      Matrix.scaled(glyph.scaleX ?? 1, glyph.scaleY ?? 1),
+      Matrix.rotated(-(glyph.rotation ?? 0)),
+      Matrix.scaled(glyph.fontSize, -glyph.fontSize)
+    )
+  )
+  return builder.detachAndDelete()
 }
 
 /**
@@ -345,7 +195,7 @@ export function drawReflowedPathTextSilhouettes(
   paint.setAlphaf(stroke.opacity)
   try {
     for (const glyph of glyphs) {
-      if (glyph.fontSize <= 0) continue
+      if (glyph.fontSize <= 0 || glyph.emojiCodePoints) continue
       const silhouette = getGlyphSilhouette(r, glyph, stroke)
       canvas.save()
       applyGlyphEmTransform(
@@ -376,11 +226,54 @@ export function drawReflowedPathTextSilhouettes(
  *                            black fills vs white strokeGeometry
  *   4. scale(fontSize,-fs) — font units → px; Y flip (font space is up-positive)
  */
+/** The paragraph holding text index `index`, found by bisection: saved glyphs can be many. */
+function rangeIndexAt(ranges: readonly TextParagraphRange[], index: number): number {
+  let lo = 0
+  let hi = ranges.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (ranges[mid].start <= index) lo = mid
+    else hi = mid - 1
+  }
+  return lo
+}
+
+/**
+ * The character whose style each saved list marker takes: the first of its list, as Figma
+ * draws markers. Figma saves a marker, with no character of its own, before its item's glyphs.
+ */
+function markerStyleCharacters(node: SceneNode): Map<number, number> {
+  const characters = new Map<number, number>()
+  if (!hasTextList(node)) return characters
+  const ranges = textParagraphRanges(node.text)
+  const listStarts = new Map(
+    textListItems(node.text, node.textParagraphs).map((item) => [
+      item.paragraph,
+      ranges[item.groupStart].start
+    ])
+  )
+  let markers: number[] = []
+  for (const [index, glyph] of (node.derivedTextGlyphs ?? []).entries()) {
+    if (glyph.firstCharacter === undefined) {
+      markers.push(index)
+      continue
+    }
+    const start = listStarts.get(rangeIndexAt(ranges, glyph.firstCharacter))
+    if (start !== undefined) for (const marker of markers) characters.set(marker, start)
+    markers = []
+  }
+  return characters
+}
+
 function savedTextEligibility(node: SceneNode): boolean {
+  // Glyphs without a character are list markers in a list, and unknown text otherwise.
+  const charactersKnown = hasTextList(node)
+    ? !!node.derivedTextGlyphs?.some((glyph) => glyph.firstCharacter !== undefined)
+    : !!node.derivedTextGlyphs?.every((glyph) => glyph.firstCharacter !== undefined)
   return (
     node.styleRuns.length === 0 ||
     (node.fills.filter((paint) => paint.visible).length === 1 &&
-      !!node.derivedTextGlyphs?.every((glyph) => glyph.firstCharacter !== undefined) &&
+      charactersKnown &&
       node.styleRuns.every(
         (run) =>
           !run.style.fills ||
@@ -391,56 +284,89 @@ function savedTextEligibility(node: SceneNode): boolean {
   )
 }
 
+/** Solid and gradient fills paint saved glyph outlines as they paint shapes; images do not. */
+function paintsSavedGlyphs(fill: Fill): boolean {
+  return fill.type === 'SOLID' || isGradientFill(fill.type)
+}
+
 export function canDrawSavedText(node: SceneNode, fill?: Fill): boolean {
-  if (fill && fill.type !== 'SOLID') return false
+  if (fill && !paintsSavedGlyphs(fill)) return false
   return savedTextEligibility(node)
 }
 
-export function drawDerivedText(r: SkiaRenderer, canvas: Canvas, node: SceneNode): boolean {
+/**
+ * Whether the text is drawn from its saved glyphs whatever fills it has: every visible fill
+ * draws them, or it has none. The emoji among them are then drawn once, apart from the fills.
+ */
+export function drawsSavedText(node: SceneNode): boolean {
+  return (
+    (node.derivedTextGlyphs?.length ?? 0) > 0 &&
+    node.fills.every((fill) => !fill.visible || paintsSavedGlyphs(fill)) &&
+    savedTextEligibility(node)
+  )
+}
+
+/** One glyph's outline in its style run's solid fills, or in the layer's fill paint. */
+function drawGlyphOutline(r: SkiaRenderer, canvas: Canvas, path: Path, runFills?: Fill[]): void {
+  if (!runFills) {
+    canvas.drawPath(path, r.fillPaint)
+    return
+  }
+  const paint = r.fillPaint.copy()
+  try {
+    for (const fill of runFills) {
+      if (!fill.visible || fill.type !== 'SOLID') continue
+      const color = fill.color
+      paint.setColor(r.ck.Color4f(color.r, color.g, color.b, color.a * fill.opacity))
+      canvas.drawPath(path, paint)
+    }
+  } finally {
+    paint.delete()
+  }
+}
+
+export function drawDerivedText(
+  r: SkiaRenderer,
+  canvas: Canvas,
+  node: SceneNode,
+  fill?: Fill
+): boolean {
   if (!node.derivedTextGlyphs?.length) return false
 
   // Pixel-snap is for horizontal Figma baselines only — on a curve it stair-steps
   // letter positions and breaks registration with strokeGeometry.
   const snapBaselines = !hasRotatedDerivedGlyphs(node)
   const savedTextEligible = savedTextEligibility(node)
-  let underlineBaselineY = 0
-  for (const glyph of node.derivedTextGlyphs) {
+  const markerCharacters = markerStyleCharacters(node)
+  // A gradient spans the layer, so its glyphs are moved into layer space rather than drawn
+  // under an em-scaled canvas that would stretch the gradient by the font size.
+  const paintsLayerSpace = fill !== undefined && fill.type !== 'SOLID'
+  for (const [index, glyph] of node.derivedTextGlyphs.entries()) {
+    // An emoji's outline is a placeholder square; its image is drawn apart from the fills.
+    if (glyph.emojiCodePoints) continue
     const glyphY = snapBaselines ? snapDerivedGlyphBaseline(glyph.y) : glyph.y
-    underlineBaselineY = Math.max(underlineBaselineY, glyphY)
-    const path = geometryBlobToPath(r.ck, glyph.commandsBlob, 'NONZERO')
+    const emPath = derivedGlyphPath(r, glyph.commandsBlob)
+    const path = paintsLayerSpace ? layerSpaceGlyphPath(r, emPath, glyph, glyphY) : emPath
     canvas.save()
-    applyGlyphEmTransform(canvas, glyph, glyphY)
+    if (!paintsLayerSpace) applyGlyphEmTransform(canvas, glyph, glyphY)
     const shouldUseHardCoverage = shouldUseHardDerivedGlyphCoverage(node)
     if (shouldUseHardCoverage) r.fillPaint.setAntiAlias(false)
+    const character = glyph.firstCharacter ?? markerCharacters.get(index)
     const run =
-      glyph.firstCharacter === undefined
+      character === undefined
         ? undefined
-        : node.styleRuns.find(
-            (run) =>
-              glyph.firstCharacter !== undefined &&
-              glyph.firstCharacter >= run.start &&
-              glyph.firstCharacter < run.start + run.length
-          )
-    const fills = run?.style.fills
-    if (fills && savedTextEligible) {
-      const paint = r.fillPaint.copy()
-      try {
-        for (const fill of fills) {
-          if (!fill.visible || fill.type !== 'SOLID') continue
-          const color = fill.color
-          paint.setColor(r.ck.Color4f(color.r, color.g, color.b, color.a * fill.opacity))
-          canvas.drawPath(path, paint)
-        }
-      } finally {
-        paint.delete()
-      }
-    } else canvas.drawPath(path, r.fillPaint)
+        : node.styleRuns.find((run) => character >= run.start && character < run.start + run.length)
+    drawGlyphOutline(r, canvas, path, savedTextEligible ? run?.style.fills : undefined)
     if (shouldUseHardCoverage) r.fillPaint.setAntiAlias(true)
+    if (path !== emPath) path.delete()
     canvas.restore()
-    path.delete()
   }
 
-  // Underline math assumes a single horizontal baseline — skip for path text.
-  if (snapBaselines) drawDerivedDecorations(r, canvas, node, underlineBaselineY)
+  // Decorations follow horizontal lines; path text has none.
+  if (snapBaselines && hasDecoration(node)) {
+    const glyphs = node.derivedTextGlyphs
+    const rects = savedTextDecorationRects(r.derivedDecorationCache, node, glyphs, r.fontGeneration)
+    drawTextDecorations(r.ck, canvas, rects, r.fillPaint)
+  }
   return true
 }

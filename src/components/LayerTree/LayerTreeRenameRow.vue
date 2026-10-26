@@ -2,9 +2,10 @@
 import { tv } from 'tailwind-variants'
 import { computed, useTemplateRef, watch } from 'vue'
 
-import type { LayerNode } from '@open-pencil/vue'
+import { useI18n } from '@open-pencil/vue/i18n'
+import type { LayerNode } from '@open-pencil/vue/primitives/LayerTree'
 
-import { nodeIcon } from '@/app/editor/icons'
+import { nodeIcon } from '@/components/icons'
 import layerTreeTheme from '@/theme/layer-tree'
 
 import LayerTreeDisclosure from './LayerTreeDisclosure.vue'
@@ -22,6 +23,7 @@ const { renameControls, expanded } = defineProps<{
 }>()
 
 const renameInput = useTemplateRef<HTMLInputElement>('renameInput')
+const { rename } = useI18n()
 const ui = useLayerTreeUI()
 const layerTree = tv(layerTreeTheme)
 const styles = computed(() => layerTree({ expanded }))
@@ -57,6 +59,7 @@ watch(renameInput, (input) => {
       data-layer-edit
       data-test-id="layers-item-input"
       data-slot="rename-input"
+      :aria-label="rename.layerName"
       :class="styles.renameInput({ class: ui?.renameInput })"
       :value="node.name"
       @blur="renameControls.commit(node.id, $event)"

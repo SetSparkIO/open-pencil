@@ -2,25 +2,27 @@ import { mapKeys } from 'es-toolkit/object'
 import { isEmptyObject } from 'es-toolkit/predicate'
 
 import type { NodeChange } from '@open-pencil/kiwi/fig/codec'
+import type {
+  PluginDataEntry,
+  Variable,
+  VariableCollection,
+  VariableValue
+} from '@open-pencil/scene-graph'
 import {
   OPEN_PENCIL_PLUGIN_DATA,
   pluginDataEntry,
-  withoutPluginData,
-  type PluginDataEntry,
-  type Variable,
-  type VariableCollection,
-  type VariableValue
-} from '@open-pencil/scene-graph'
+  withoutPluginData
+} from '@open-pencil/scene-graph/plugin-data'
 
 import { readNodeChangePluginData } from '../plugin-data'
 
-const { token, modeConditions } = OPEN_PENCIL_PLUGIN_DATA
+const { token, modeConditions, modeAttribute } = OPEN_PENCIL_PLUGIN_DATA
 
 type TokenFields = Pick<Variable, 'unit' | 'expressions'>
 
 /** Plugin data other than the token entries, which are rebuilt on every save. */
 export function withoutTokenPluginData(pluginData: PluginDataEntry[]): PluginDataEntry[] {
-  return withoutPluginData(pluginData, [token, modeConditions])
+  return withoutPluginData(pluginData, [token, modeConditions, modeAttribute])
 }
 
 function nonEmpty<T extends object>(record: T): T | undefined {
@@ -28,27 +30,42 @@ function nonEmpty<T extends object>(record: T): T | undefined {
 }
 
 /** `.fig` stores numbers as float32, so compare at that precision, not the plugin data's double. */
-function sameNumber(a: VariableValue | undefined, b: number): boolean {
-  return typeof a === 'number' && Math.fround(a) === Math.fround(b)
+function sameNumber(a: number, b: number | undefined): boolean {
+  return b !== undefined && Math.fround(a) === Math.fround(b)
 }
 
 /**
- * The stored number stays authoritative: an expression whose mode value was edited elsewhere,
- * Figma included, no longer describes that value and is dropped rather than overriding it.
+ * The stored number stays authoritative: an expression whose plain number was edited elsewhere,
+ * Figma included, no longer describes that value and is dropped rather than overriding it. One
+ * written over a formula or a reference has no number to check and stays.
  */
 export function readVariableToken(
   nc: NodeChange,
   valuesByMode: Record<string, VariableValue>
 ): TokenFields {
   const stored = readNodeChangePluginData(nc, token) ?? {}
-  const expressions = Object.entries(stored.expressions ?? {}).filter(([mode, expression]) =>
-    sameNumber(valuesByMode[mode], expression.resolved)
-  )
+  const expressions = Object.entries(stored.expressions ?? {}).filter(([mode, expression]) => {
+    if (!Object.hasOwn(valuesByMode, mode)) return false
+    const value = valuesByMode[mode]
+    return typeof value === 'number' ? sameNumber(value, expression.resolved) : true
+  })
   return { unit: stored.unit, expressions: nonEmpty(Object.fromEntries(expressions)) }
 }
 
 export function readModeConditions(nc: NodeChange): Record<string, string> {
   return readNodeChangePluginData(nc, modeConditions) ?? {}
+}
+
+export function readModeAttribute(nc: NodeChange): string | undefined {
+  return readNodeChangePluginData(nc, modeAttribute)
+}
+
+export function modeAttributePluginData(
+  collection: VariableCollection
+): PluginDataEntry | undefined {
+  return collection.modeAttribute
+    ? pluginDataEntry(modeAttribute, collection.modeAttribute)
+    : undefined
 }
 
 /** Mode ids in the file differ from the model's, so callers map them. */

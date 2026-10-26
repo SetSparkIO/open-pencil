@@ -1,6 +1,6 @@
-import { AUTOMATION_HTTP_PORT } from '@open-pencil/core/constants'
+import { MCP_AGENT_HEADER, OPEN_PENCIL_MCP_SERVER } from '@open-pencil/core/constants'
 
-import { getAutomationAuthToken } from '@/app/automation/mcp/spawn'
+import { getAutomationAuthToken, getMCPServerURL } from '@/app/automation/mcp/spawn'
 import { describeDiagnosticError, recordMCPConnectionFailure } from '@/app/diagnostics'
 import { appCredentialServices } from '@/app/settings/credentials/app'
 
@@ -47,9 +47,13 @@ export async function buildPiMCPServers(options?: {
   )
   return {
     ...Object.fromEntries(entries),
-    'open-pencil': {
-      url: `http://127.0.0.1:${AUTOMATION_HTTP_PORT}/mcp`,
-      ...(authorizationToken ? { headers: { Authorization: `Bearer ${authorizationToken}` } } : {}),
+    [OPEN_PENCIL_MCP_SERVER]: {
+      url: getMCPServerURL(),
+      // The Pi harness chat's tool calls show as its agent rather than an outside MCP client.
+      headers: {
+        [MCP_AGENT_HEADER]: 'harness',
+        ...(authorizationToken ? { Authorization: `Bearer ${authorizationToken}` } : {})
+      },
       auth: false
     }
   }

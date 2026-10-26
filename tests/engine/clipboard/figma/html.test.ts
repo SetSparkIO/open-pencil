@@ -1,25 +1,24 @@
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import {
-  buildFigmaClipboardHTML,
-  importClipboardNodes,
-  initCodec,
-  parseFigmaClipboard,
-  SceneGraph
-} from '@open-pencil/core'
-import { slotPropertyId } from '@open-pencil/scene-graph'
+import { buildFigmaClipboardHTML, importClipboardNodes } from '@open-pencil/core/clipboard'
+import { fontManager } from '@open-pencil/core/text'
+import { parseFigmaClipboard } from '@open-pencil/fig/clipboard'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { SceneGraph } from '@open-pencil/scene-graph'
+import { slotPropertyId } from '@open-pencil/scene-graph/slots'
+import { pixelLength } from '@open-pencil/scene-graph/text'
 
 import { expectDefined } from '#tests/helpers/assert'
 
 function expectFigmaEditableTextDefaults(
   textNode: NonNullable<Awaited<ReturnType<typeof parseFigmaClipboard>>>['nodes'][number]
 ) {
-  expect(textNode.textUserLayoutVersion).toBe(5)
+  expect(textNode.textUserLayoutVersion).toBe(4)
   expect(textNode.textExplicitLayoutVersion).toBe(1)
   expect(textNode.textBidiVersion).toBe(1)
-  expect(textNode.textAutoResize).toBe('NONE')
   expect(textNode.lineHeight).toEqual({ value: 100, units: 'PERCENT' })
-  expect(textNode.letterSpacing).toEqual({ value: 0, units: 'PIXELS' })
+  // Figma writes no letter spacing as zero percent.
+  expect(textNode.letterSpacing).toEqual({ value: 0, units: 'PERCENT' })
   expect(textNode.fontVariantCommonLigatures).toBe(true)
   expect(textNode.fontVariantContextualLigatures).toBe(true)
   expect(textNode.textDecorationSkipInk).toBe(true)
@@ -29,6 +28,11 @@ function expectFigmaEditableTextDefaults(
 describe('buildFigmaClipboardHTML', () => {
   beforeAll(async () => {
     await initCodec()
+    const inter = expectDefined(
+      await fontManager.fetchBundledFont('/InterVariable.ttf'),
+      'bundled Inter font'
+    )
+    await fontManager.markLoaded('Inter', 'Regular', inter)
   })
 
   it('encodes a simple frame without throwing', async () => {
@@ -87,10 +91,37 @@ describe('buildFigmaClipboardHTML', () => {
         name
       )
       const characters = text.textData?.characters ?? ''
-      expect(text.derivedTextData?.logicalIndexToCharacterOffsetMap?.length).toBe(
-        characters.length + 1
-      )
+      expect(text.derivedTextData?.logicalIndexToCharacterOffsetMap?.length).toBe(characters.length)
     }
+  })
+
+  it('keeps how text resizes, so Figma reflows it in its own font', async () => {
+    const graph = new SceneGraph()
+    const page = graph.getPages()[0]
+    const create = (name: string, textAutoResize: 'WIDTH_AND_HEIGHT' | 'HEIGHT' | 'NONE') =>
+      graph.createNode('TEXT', page.id, {
+        name,
+        width: 120,
+        height: 24,
+        text: 'Get started',
+        fontFamily: 'Inter',
+        fontSize: 16,
+        textAutoResize
+      })
+    const nodes = [
+      create('Label', 'WIDTH_AND_HEIGHT'),
+      create('Body', 'HEIGHT'),
+      create('Box', 'NONE')
+    ]
+
+    const html = await buildFigmaClipboardHTML(nodes, graph)
+    const parsed = await parseFigmaClipboard(expectDefined(html, 'Figma clipboard html'))
+    const autoResize = Object.fromEntries(
+      (parsed?.nodes ?? [])
+        .filter((node) => node.type === 'TEXT')
+        .map((node) => [node.name, node.textAutoResize])
+    )
+    expect(autoResize).toEqual({ Label: 'WIDTH_AND_HEIGHT', Body: 'HEIGHT', Box: 'NONE' })
   })
 
   it('encodes text nodes with style runs', async () => {
@@ -119,15 +150,19 @@ describe('buildFigmaClipboardHTML', () => {
     const textNode = parsed?.nodes.find((node) => node.type === 'TEXT')
     if (!textNode) throw new Error('Expected text node')
     expectFigmaEditableTextDefaults(textNode)
-    expect(textNode.derivedTextData?.glyphs).toBeDefined()
-    expect(textNode.derivedTextData?.baselines?.length).toBeGreaterThan(0)
+    const glyphs = textNode.derivedTextData?.glyphs ?? []
+    expect(glyphs.length).toBeGreaterThan(0)
+    // Without bold and italic Inter loaded, the paragraph draws them in the face it has, and the
+    // glyphs keep that face's outlines: Figma shows nothing for glyphs saved without them.
+    expect(glyphs.every((glyph) => glyph.commandsBlob !== undefined)).toBe(true)
+    expect(textNode.derivedTextData?.baselines).toHaveLength(1)
     expect(textNode.derivedTextData?.logicalIndexToCharacterOffsetMap?.length).toBe(
-      text.text.length + 1
+      text.text.length
     )
     expect(textNode.derivedTextData?.derivedLines).toEqual([{ directionality: 'LTR' }])
   })
 
-  it('encodes fallback derived text metrics when outline fonts are unavailable', async () => {
+  it('writes text whose font is unavailable in the font that drew it', async () => {
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
     graph.createNode('TEXT', page.id, {
@@ -140,7 +175,7 @@ describe('buildFigmaClipboardHTML', () => {
       fontFamily: 'Missing Preview Font',
       fontWeight: 700,
       fontSize: 56,
-      lineHeight: 67,
+      lineHeight: pixelLength(67),
       textAutoResize: 'HEIGHT'
     })
 
@@ -149,10 +184,13 @@ describe('buildFigmaClipboardHTML', () => {
     const textNode = parsed?.nodes.find((node) => node.type === 'TEXT')
     const baseline = textNode?.derivedTextData?.baselines?.[0]
 
-    expect(textNode?.textUserLayoutVersion).toBe(5)
-    expect(textNode?.textAutoResize).toBe('NONE')
-    expect(textNode?.derivedTextData?.glyphs?.length).toBe('Analytics Overview'.length)
-    expect(baseline?.width).toBe(552)
+    // The text keeps its auto-resize, so Figma reflows it in its own font once it is edited.
+    expect(textNode?.textAutoResize).toBe('HEIGHT')
+    const glyphs = textNode?.derivedTextData?.glyphs ?? []
+    expect(glyphs).toHaveLength('Analytics Overview'.length)
+    expect(glyphs.every((glyph) => glyph.commandsBlob !== undefined)).toBe(true)
+    expect(textNode?.derivedTextData?.baselines).toHaveLength(1)
+    expect(baseline?.width).toBeLessThanOrEqual(552)
     expect(baseline?.lineHeight).toBe(67)
     expect(textNode?.derivedTextData?.layoutSize).toEqual({ x: 552, y: 70 })
   })

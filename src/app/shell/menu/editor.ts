@@ -1,14 +1,16 @@
-import { useEditorCommands } from '@open-pencil/vue'
-import type { EditorCommandId } from '@open-pencil/vue'
+import { useEditorCommands, type EditorCommandId } from '@open-pencil/vue/editor/commands'
 
 import { useEditorStore } from '@/app/editor/active-store'
 import { clearRecentFiles, forgetRecentFile, recentLocalFileAt } from '@/app/recent-files'
-import { createSharedEditorMenuActions } from '@/app/shell/menu/editor-actions'
+import { runFocusedCommand } from '@/app/shell/commands/focused'
+import { createSharedEditorMenuActions } from '@/app/shell/menu/actions/editor'
+import { createSelectionMenuActions } from '@/app/shell/menu/actions/selection'
+import { watchNativeMenuFeatures } from '@/app/shell/menu/features'
 import { openFileDialog, openFileFromPath } from '@/app/shell/menu/files'
 import { useNativeMenuEvents } from '@/app/shell/menu/native-events'
 import { OPEN_RECENT_EVENT_PREFIX, watchRecentFilesMenu } from '@/app/shell/menu/recent-files'
+import { createSaveMenuActions } from '@/app/shell/menu/save-actions'
 import { APP_MENU_SCHEMA, type AppMenuEntry } from '@/app/shell/menu/schema'
-import { createSelectionMenuActions } from '@/app/shell/menu/selection-actions'
 import { SHELL_MENU_IDS } from '@/app/shell/menu/shell'
 import { useAppTheme } from '@/app/shell/theme'
 import { createTab, closeTab, activeTab } from '@/app/tabs'
@@ -30,6 +32,7 @@ export function useEditorMenu() {
   if (!isTauri()) return
 
   watchRecentFilesMenu()
+  watchNativeMenuFeatures()
 
   const { setTheme } = useAppTheme()
   const { runCommand } = useEditorCommands()
@@ -40,8 +43,7 @@ export function useEditorMenu() {
     close: () => {
       if (activeTab.value) void closeTab(activeTab.value.id)
     },
-    save: () => void store.saveFigFile(),
-    'save-as': () => void store.saveFigFileAs(),
+    ...createSaveMenuActions(store),
     'export-selection': () => {
       if (store.state.selectedIds.size > 0) void store.exportSelection(1, 'png')
     },
@@ -53,6 +55,9 @@ export function useEditorMenu() {
     },
     'export-pptx': () => {
       if (store.state.selectedIds.size > 0) void store.exportSelection(1, 'pptx')
+    },
+    'export-drawio': () => {
+      if (store.state.selectedIds.size > 0) void store.exportSelection(1, 'drawio')
     },
     'export-fig': () => {
       if (store.state.selectedIds.size > 0) void store.exportSelection(1, 'fig')
@@ -82,7 +87,7 @@ export function useEditorMenu() {
     }
     if (SHELL_MENU_IDS.has(id)) return
     if (COMMAND_MENU_IDS.has(id as EditorCommandId)) {
-      runCommand(id as EditorCommandId)
+      runFocusedCommand(store, runCommand, id as EditorCommandId)
       return
     }
     actions[id]?.()

@@ -142,6 +142,30 @@ test('joining says hello, and a hello is answered with a welcome to that peer', 
   expect(joined).toEqual([BOB, BOB])
 })
 
+test('signaling counts as connected once the relay answers, until the socket is lost', async () => {
+  const error = spyOn(console, 'error').mockImplementation(() => undefined)
+  try {
+    const { transport, sockets } = join()
+    expect(transport.media).toBeNull()
+    expect(transport.discoveryMs).toBeGreaterThan(0)
+    expect(transport.signalingConnected()).toBe(false)
+    sockets[0].open()
+    // Open is not enough: a full room is turned away after the socket opens.
+    expect(transport.signalingConnected()).toBe(false)
+    const self = sockets[0].sent[0].senderId
+    sockets[0].receive({ kind: 'pong', senderId: self, targetId: null })
+    expect(transport.signalingConnected()).toBe(true)
+
+    sockets[0].serverClose(1006)
+    expect(transport.signalingConnected()).toBe(false)
+    await nextTask()
+    sockets[1].open()
+    expect(transport.signalingConnected()).toBe(false)
+  } finally {
+    error.mockRestore()
+  }
+})
+
 test("frames for another peer and the client's own echoes are ignored", () => {
   const { transport, sockets, joined } = join()
   const received: string[] = []

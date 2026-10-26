@@ -1,16 +1,18 @@
 /* eslint-disable max-lines -- MCP server scenarios share lifecycle and transport fixtures */
 
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 
+import { MCP_AGENT_HEADER, MCP_CHAT_HEADER } from '@open-pencil/core/constants'
 import { SceneGraph } from '@open-pencil/scene-graph'
 
 import { startServer, type ServerHandle } from '#mcp/server'
 import { createToolDescriptors, getMCPToolDefinitions } from '#mcp/tool/manifest'
+import type { MCPToolScope } from '#mcp/tool/scope'
 import { parseDiscoveryInfo } from '#mcp/transport/discovery'
 
 import { expectDefined } from '#tests/helpers/assert'
@@ -37,7 +39,7 @@ function testSocketPath(): string | null {
   return join(SOCKET_DIR, `mcp-test-${process.pid}-${++testCounter}.sock`)
 }
 
-async function createTestClient(disabledTools: string[] = []) {
+async function createTestClient(disabledTools: string[] = [], scope: MCPToolScope = 'document') {
   if (isUnix) await mkdir(SOCKET_DIR, { recursive: true })
   const authToken = TEST_CLIENT_AUTH_TOKEN
   const handle = await startServer({
@@ -46,6 +48,7 @@ async function createTestClient(disabledTools: string[] = []) {
     socketPath: testSocketPath(),
     authToken,
     disabledTools,
+    scope,
     enableEval: false,
     mcpRoot: null
   })
@@ -83,6 +86,7 @@ async function createTestClient(disabledTools: string[] = []) {
   const safeBrowser = browser
   return {
     client: safeClient,
+    browser: safeBrowser,
     graph,
     handle,
     close: async () => {
@@ -140,6 +144,12 @@ describe('startServer option validation', () => {
       'appWaitTimeoutMs must be a safe integer'
     )
   })
+
+  test('rejects an invalid session idle timeout', async () => {
+    for (const sessionIdleTimeoutMs of [-1, Number.NaN, Infinity, 1.5, 2_147_483_648]) {
+      await expect(startServer({ sessionIdleTimeoutMs })).rejects.toThrow(RangeError)
+    }
+  })
 })
 
 describe('MCP server', () => {
@@ -183,6 +193,7 @@ describe('MCP server', () => {
     expect(byName.get('save_file')?.effect).toBe('write')
     expect(byName.get('open_file')?.effect).toBe('read')
     expect(byName.get('open_file')?.capabilities).toEqual(['filesystem:read', 'document:read'])
+    expect(byName.get('list_recent_files')?.capabilities).toEqual(['filesystem:read'])
     expect(byName.get('close_file')?.effect).toBe('write')
     expect(byName.get('update_node')?.effect).toBe('write')
     expect(byName.get('new_document')?.capabilities).toEqual(['document:write', 'filesystem:write'])
@@ -266,6 +277,21 @@ describe('MCP server', () => {
     expect(fill.isError).not.toBe(true)
   })
 
+  test('rejects arguments a tool does not take instead of dropping them', async () => {
+    const create = await client.callTool({
+      name: 'create_shape',
+      arguments: { type: 'RECTANGLE', x: 0, y: 0, width: 50, height: 50 }
+    })
+    const { id } = parseResult(create) as { id: string }
+
+    const update = await client.callTool({
+      name: 'update_node',
+      arguments: { id, properties: { x: 0, y: 500 } }
+    })
+    expect(update.isError).toBe(true)
+    expect(graph.getNode(id)?.y).toBe(0)
+  })
+
   test('get_page_tree returns page structure', async () => {
     await client.callTool({
       name: 'create_shape',
@@ -321,10 +347,105 @@ describe('MCP server', () => {
 // mcpRoot tests
 // ---------------------------------------------------------------------------
 
+describe('MCP server sharing only the selection', () => {
+  let ctx: Awaited<ReturnType<typeof createTestClient>> | null = null
+
+  beforeEach(async () => {
+    ctx = await createTestClient([], 'selection')
+  })
+
+  afterEach(async () => {
+    await ctx?.close()
+    ctx = null
+  })
+
+  test('lists only the selection read tools', async () => {
+    const { tools } = await expectDefined(ctx, 'client').client.listTools()
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'describe',
+      'export_image',
+      'get_node',
+      'get_page_tree',
+      'get_selection'
+    ])
+  })
+
+  test('marks every tool call with the scope for the app to enforce', async () => {
+    const { client, browser } = expectDefined(ctx, 'client')
+    await client.callTool({ name: 'get_selection', arguments: {} })
+    const call = browser.requests.find((request) => request.command === 'tool')
+    expect(call?.args).toMatchObject({ name: 'get_selection', scope: 'selection' })
+  })
+
+  test('refuses to write an export to a file', async () => {
+    const { client, browser } = expectDefined(ctx, 'client')
+    const result = await client.callTool({
+      name: 'export_image',
+      arguments: { path: 'selection.png' }
+    })
+    expect(result.isError).toBe(true)
+    expect(browser.requests.map((request) => request.command)).not.toContain('tool')
+  })
+
+  test('keeps raw RPC to the selection tools, so it cannot reach settings', async () => {
+    const { browser, handle } = expectDefined(ctx, 'client')
+    const rpc = (body: object) =>
+      fetch(`http://127.0.0.1:${handle.httpPort}/rpc`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${TEST_CLIENT_AUTH_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }).then((response) => response.json() as Promise<unknown>)
+
+    expect(await rpc({ command: 'update_settings', args: { mcp: {} } })).toMatchObject({
+      ok: false
+    })
+    expect(
+      await rpc({ command: 'tool', args: { name: 'delete_node', args: { id: '0:1' } } })
+    ).toMatchObject({ ok: false })
+    expect(browser.requests.map((request) => request.command)).not.toContain('update_settings')
+
+    await rpc({ command: 'tool', args: { name: 'get_node', args: { id: '0:1' } } })
+    const call = browser.requests.find((request) => request.command === 'tool')
+    expect(call?.args).toMatchObject({ name: 'get_node', scope: 'selection' })
+  })
+})
+
+describe('raw RPC', () => {
+  test('forwards render JSX to the app as written, with its placement', async () => {
+    const ctx = await createTestClient()
+    try {
+      const { browser, handle } = ctx
+      const args = {
+        jsx: "<Frame w={100} h={100} fill={designVar('Brand/primary')} />",
+        replace_id: '0:1',
+        insert_index: 0
+      }
+      await fetch(`http://127.0.0.1:${handle.httpPort}/rpc`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${TEST_CLIENT_AUTH_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ command: 'tool', args: { name: 'render', args } })
+      })
+      // The app renders it, so variable references survive; a tree sent as JSON would lose them.
+      const call = expectDefined(browser, 'browser').requests.find(
+        (request) => request.command === 'tool'
+      )
+      expect(call?.args).toEqual({ name: 'render', args })
+    } finally {
+      await ctx.close()
+    }
+  })
+})
+
 describe('MCP server with mcpRoot', () => {
   async function withMCPRootServer(
     mcpRoot: string | null,
-    fn: (client: Client, browser: MockBrowser, graph: SceneGraph) => Promise<void>
+    fn: (client: Client, browser: MockBrowser, graph: SceneGraph, httpPort: number) => Promise<void>
   ) {
     if (isUnix) await mkdir(SOCKET_DIR, { recursive: true })
     if (mcpRoot) await mkdir(mcpRoot, { recursive: true })
@@ -355,13 +476,57 @@ describe('MCP server with mcpRoot', () => {
       )
       await client.connect(transport)
 
-      await fn(client, browser, graph)
+      await fn(client, browser, graph, httpPort)
     } finally {
       await client?.close().catch(() => undefined)
       browser?.close()
       await handle.close()
     }
   }
+
+  test('a browser app reads and writes files inside mcpRoot through /files', async () => {
+    await withMCPRootServer(TEST_MCP_ROOT, async (_client, _browser, _graph, httpPort) => {
+      const path = join(TEST_MCP_ROOT, 'browser', 'saved.fig')
+      const url = (filePath: string) =>
+        `http://127.0.0.1:${httpPort}/files/${filePath.split(/[\\/]/).map(encodeURIComponent).join('/')}`
+      const auth = { authorization: `Bearer ${TEST_AUTH_TOKEN}` }
+      const bytes = new Uint8Array([80, 75, 3, 4, 1, 2, 3])
+
+      const put = await fetch(url(path), { method: 'PUT', headers: auth, body: bytes })
+      expect(put.status).toBe(200)
+      expect(new Uint8Array(await readFile(path))).toEqual(bytes)
+      const get = await fetch(url(path), { headers: auth })
+      expect(new Uint8Array(await get.arrayBuffer())).toEqual(bytes)
+
+      // Larger than one read chunk, so the file is read back across several.
+      const large = Uint8Array.from({ length: 2.5 * 1024 * 1024 }, (_, i) => i % 251)
+      await fetch(url(path), { method: 'PUT', headers: auth, body: large })
+      const back = await fetch(url(path), { headers: auth })
+      expect(new Uint8Array(await back.arrayBuffer())).toEqual(large)
+
+      // A name the URL must carry exactly: a space, a fragment mark, a literal escape, Cyrillic.
+      const awkward = join(TEST_MCP_ROOT, 'browser', 'my #1 %20 файл.fig')
+      expect(
+        (await fetch(url(awkward), { method: 'PUT', headers: auth, body: bytes })).status
+      ).toBe(200)
+      expect(new Uint8Array(await readFile(awkward))).toEqual(bytes)
+
+      expect((await fetch(url(path))).status).toBe(401)
+      const outside = join(TEST_MCP_ROOT, '..', 'outside.fig')
+      expect(
+        (await fetch(url(outside), { method: 'PUT', headers: auth, body: bytes })).status
+      ).toBe(400)
+    })
+  })
+
+  test('has no /files without mcpRoot', async () => {
+    await withMCPRootServer(null, async (_client, _browser, _graph, httpPort) => {
+      const response = await fetch(`http://127.0.0.1:${httpPort}/files/tmp/a.fig`, {
+        headers: { authorization: `Bearer ${TEST_AUTH_TOKEN}` }
+      })
+      expect(response.status).toBe(404)
+    })
+  })
 
   test('registers open_file and new_document tools when mcpRoot is set', async () => {
     await withMCPRootServer(TEST_MCP_ROOT, async (client) => {
@@ -370,6 +535,26 @@ describe('MCP server with mcpRoot', () => {
       expect(byName.has('open_file')).toBe(true)
       expect(byName.get('open_file')?.annotations?.readOnlyHint).toBe(true)
       expect(byName.has('new_document')).toBe(true)
+    })
+  })
+
+  test('list_recent_files keeps only recent files inside mcpRoot', async () => {
+    await withMCPRootServer(TEST_MCP_ROOT, async (client, browser) => {
+      const inside = join(TEST_MCP_ROOT, 'recent.fig')
+      const outside = join(TEST_MCP_ROOT, '..', 'outside.fig')
+      const updatedAt = '2026-01-01T00:00:00.000Z'
+      browser.results.set('list_recent_files', {
+        files: [
+          { path: inside, name: 'recent.fig', updated_at: updatedAt },
+          { path: outside, name: 'outside.fig', updated_at: updatedAt }
+        ]
+      })
+
+      const result = await client.callTool({ name: 'list_recent_files', arguments: {} })
+      expect(result.isError).not.toBe(true)
+      expect(parseResult(result)).toEqual({
+        files: [{ path: inside, name: 'recent.fig', updated_at: updatedAt }]
+      })
     })
   })
 
@@ -472,6 +657,7 @@ describe('MCP server with mcpRoot', () => {
       const { tools } = await client.listTools()
       const names = tools.map((t) => t.name)
       expect(names).not.toContain('open_file')
+      expect(names).not.toContain('list_recent_files')
       expect(names).not.toContain('new_document')
     })
   })
@@ -702,4 +888,132 @@ describe('MCP server concurrent startServer', () => {
       await b.close()
     }
   }, 15000)
+})
+
+describe('MCP sessions as agents', () => {
+  async function withAgentClient(
+    headers: Record<string, string>,
+    run: (
+      client: Client,
+      browser: MockBrowser,
+      transport: StreamableHTTPClientTransport
+    ) => Promise<void>
+  ) {
+    if (isUnix) await mkdir(SOCKET_DIR, { recursive: true })
+    const handle = await startServer({
+      httpPort: 0,
+      withTcp: true,
+      socketPath: testSocketPath(),
+      authToken: TEST_CLIENT_AUTH_TOKEN,
+      enableEval: false,
+      mcpRoot: null
+    })
+    const httpPort = expectDefined(handle.httpPort, 'TCP port')
+    const browser = await connectMockBrowser(httpPort, new SceneGraph(), TEST_CLIENT_AUTH_TOKEN)
+    try {
+      await waitForBrowserRegistration(httpPort)
+      const client = new Client({ name: 'test-client', version: '0.0.0' })
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${httpPort}/mcp`),
+        {
+          requestInit: {
+            headers: { Authorization: `Bearer ${TEST_CLIENT_AUTH_TOKEN}`, ...headers }
+          }
+        }
+      )
+      await client.connect(transport)
+      await run(client, browser, transport)
+    } finally {
+      browser.close()
+      await handle.close()
+    }
+  }
+
+  function agentOf(browser: MockBrowser): unknown {
+    const request = browser.requests.find((item) => item.command === 'tool')
+    return (request?.args as { agent?: unknown } | undefined)?.agent
+  }
+
+  test('a tool call names its session and client, so the app can show it as an agent', async () => {
+    await withAgentClient({}, async (client, browser) => {
+      await client.callTool({ name: 'get_page_tree', arguments: {} })
+      expect(agentOf(browser)).toMatchObject({ kind: 'mcp', client: 'test-client' })
+      expect((agentOf(browser) as { session: unknown }).session).toBeString()
+    })
+  })
+
+  test("the app's ACP chat marks its session, and closing the session tells the app", async () => {
+    await withAgentClient({ [MCP_AGENT_HEADER]: 'acp' }, async (client, browser, transport) => {
+      await client.callTool({ name: 'get_page_tree', arguments: {} })
+      const agent = agentOf(browser) as { session: string; kind: string }
+      expect(agent.kind).toBe('acp')
+
+      await transport.terminateSession()
+      const closed = () => browser.requests.find((item) => item.command === 'agent_session_closed')
+      // The notice reaches the app over its socket after the DELETE is answered.
+      for (let attempt = 0; attempt < 50 && !closed(); attempt++) await Bun.sleep(10)
+      expect(closed()?.args).toEqual({ session: agent.session })
+    })
+  })
+
+  function openedNotice(browser: MockBrowser) {
+    return browser.requests.find((item) => item.command === 'agent_session_opened')
+  }
+
+  test("an ACP chat's session tells the app it opened, naming the chat", async () => {
+    const chat = '0123456789abcdef0123456789abcdef'
+    await withAgentClient(
+      { [MCP_AGENT_HEADER]: 'acp', [MCP_CHAT_HEADER]: chat },
+      async (client, browser) => {
+        // The notice reaches the app over its socket after initialize is answered.
+        for (let attempt = 0; attempt < 50 && !openedNotice(browser); attempt++) {
+          await Bun.sleep(10)
+        }
+        expect(openedNotice(browser)?.args).toMatchObject({ kind: 'acp', chat })
+        await client.callTool({ name: 'get_page_tree', arguments: {} })
+        const agent = agentOf(browser) as { session: string }
+        expect(openedNotice(browser)?.args).toMatchObject({ session: agent.session })
+      }
+    )
+  })
+
+  test("an ACP chat's tool call names the chat and the call's id in it", async () => {
+    const chat = '0123456789abcdef0123456789abcdef'
+    await withAgentClient(
+      { [MCP_AGENT_HEADER]: 'acp', [MCP_CHAT_HEADER]: chat },
+      async (client, browser) => {
+        // Codex sends its call id as `callId`, Claude Code as `claudecode/toolUseId`.
+        await client.callTool({
+          name: 'get_page_tree',
+          arguments: {},
+          _meta: { callId: 'exec-1' }
+        })
+        await client.callTool({
+          name: 'get_page_tree',
+          arguments: {},
+          _meta: { 'claudecode/toolUseId': 'toolu_1' }
+        })
+        const agents = browser.requests
+          .filter((item) => item.command === 'tool')
+          .map((item) => (item.args as { agent?: unknown }).agent)
+        expect(agents).toMatchObject([
+          { kind: 'acp', chat, call: 'exec-1' },
+          { kind: 'acp', chat, call: 'toolu_1' }
+        ])
+      }
+    )
+  })
+
+  test('a chat header that is not a chat id is not forwarded', async () => {
+    await withAgentClient(
+      { [MCP_AGENT_HEADER]: 'acp', [MCP_CHAT_HEADER]: 'not hex' },
+      async (_client, browser) => {
+        for (let attempt = 0; attempt < 50 && !openedNotice(browser); attempt++) {
+          await Bun.sleep(10)
+        }
+        const notice = expectDefined(openedNotice(browser), 'agent_session_opened notice')
+        expect(notice.args).not.toHaveProperty('chat')
+      }
+    )
+  })
 })

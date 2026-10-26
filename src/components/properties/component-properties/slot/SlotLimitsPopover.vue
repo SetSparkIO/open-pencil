@@ -2,8 +2,9 @@
 import { PopoverClose, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from 'reka-ui'
 import { computed } from 'vue'
 
-import { useI18n, useRetainedPopup } from '@open-pencil/vue'
-import type { SlotLimit } from '@open-pencil/vue'
+import type { SlotLimit } from '@open-pencil/vue/controls/slots'
+import { useI18n } from '@open-pencil/vue/i18n'
+import { useRetainedPopup } from '@open-pencil/vue/lifecycle/retention'
 
 import AppButton from '@/components/ui/button/AppButton.vue'
 import SeverityIcon from '@/components/ui/feedback/SeverityIcon.vue'
@@ -32,7 +33,7 @@ function label(limit: SlotLimit): string {
     <PopoverTrigger
       :data-issues="issues > 0 || undefined"
       data-property="slot-limits"
-      class="flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded bg-panel-field px-1.5 text-[10px] text-muted outline-none hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus data-issues:bg-issue-warning/15 data-issues:text-issue-warning"
+      class="flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded bg-panel-field px-1.5 text-[10px] text-muted outline-none hover:bg-hover hover:text-surface focus-visible:ring-1 focus-visible:ring-panel-focus data-issues:bg-warning/15 data-issues:text-warning"
     >
       <SeverityIcon v-if="issues" severity="warning" />
       <icon-lucide-check v-else class="size-3 text-success" />

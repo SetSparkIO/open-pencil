@@ -1,12 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 
-import {
-  decompressFigKiwiDataAsync,
-  exportFigFile,
-  initCodec,
-  parseFigFile,
-  SceneGraph
-} from '@open-pencil/core'
+import { exportFigFile, parseFigFile } from '@open-pencil/core/io/formats/fig'
+import { initCodec } from '@open-pencil/kiwi/fig/codec'
+import { decompressFigKiwiDataAsync } from '@open-pencil/kiwi/fig/container'
+import { SceneGraph } from '@open-pencil/scene-graph'
 import type { JSONObject } from '@open-pencil/scene-graph/primitives'
 
 import { expectDefined } from '#tests/helpers/assert'
@@ -121,7 +118,7 @@ describe('text node export', () => {
     const { unzipSync, inflateSync } = await import('fflate')
     const { decodeBinarySchema, compileSchema, ByteBuffer } =
       await import('@open-pencil/kiwi/schema-runtime')
-    const { parseFigKiwiChunks } = await import('@open-pencil/core')
+    const { parseFigKiwiChunks } = await import('@open-pencil/kiwi/fig/container')
 
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
@@ -189,7 +186,7 @@ describe('text node export', () => {
     const { unzipSync, inflateSync } = await import('fflate')
     const { decodeBinarySchema, compileSchema, ByteBuffer } =
       await import('@open-pencil/kiwi/schema-runtime')
-    const { parseFigKiwiChunks } = await import('@open-pencil/core')
+    const { parseFigKiwiChunks } = await import('@open-pencil/kiwi/fig/container')
 
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
@@ -235,7 +232,7 @@ describe('text node export', () => {
     const { unzipSync, inflateSync } = await import('fflate')
     const { decodeBinarySchema, compileSchema, ByteBuffer } =
       await import('@open-pencil/kiwi/schema-runtime')
-    const { parseFigKiwiChunks } = await import('@open-pencil/core')
+    const { parseFigKiwiChunks } = await import('@open-pencil/kiwi/fig/container')
 
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
@@ -274,7 +271,8 @@ describe('text node export', () => {
     )
 
     expect(textNc.textAutoResize).toBe('NONE')
-    expect(textNc.lineHeight).toBeUndefined()
+    // Auto line height, written as Figma writes it.
+    expect(textNc.lineHeight).toEqual({ value: 100, units: 'PERCENT' })
     expect(textNc.stackChildAlignSelf).toBeUndefined()
   })
 
@@ -311,7 +309,7 @@ describe('text node export', () => {
     const { unzipSync, inflateSync } = await import('fflate')
     const { decodeBinarySchema, compileSchema, ByteBuffer } =
       await import('@open-pencil/kiwi/schema-runtime')
-    const { parseFigKiwiChunks } = await import('@open-pencil/core')
+    const { parseFigKiwiChunks } = await import('@open-pencil/kiwi/fig/container')
 
     const graph = new SceneGraph()
     const page = graph.getPages()[0]

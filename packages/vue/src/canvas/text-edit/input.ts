@@ -1,5 +1,6 @@
-import type { Editor } from '@open-pencil/core/editor'
+import { getNodeEditCapability, type Editor } from '@open-pencil/core'
 import type { SceneNode } from '@open-pencil/scene-graph'
+import { generatedFrameOwner, generatedFrameText } from '@open-pencil/scene-graph/generated'
 
 import type { CanvasLabelKind } from '#vue/canvas/labels/edit'
 import type { DragState } from '#vue/shared/input/types'
@@ -15,6 +16,7 @@ type TextEditInputOptions = {
   hitTestInScope: HitTest
   hitTestSectionTitle: (cx: number, cy: number) => SceneNode | null
   hitTestComponentLabel: (cx: number, cy: number) => SceneNode | null
+  hitTestFrameTitle: (cx: number, cy: number) => SceneNode | null
   getClickCount: () => number
   wasSelectedBeforeClickSequence: (id: string) => boolean
   onEditCanvasLabel?: (kind: CanvasLabelKind, node: SceneNode) => void
@@ -28,6 +30,7 @@ export function createTextEditInput(options: TextEditInputOptions) {
     hitTestInScope,
     hitTestSectionTitle,
     hitTestComponentLabel,
+    hitTestFrameTitle,
     getClickCount,
     wasSelectedBeforeClickSequence,
     onEditCanvasLabel,
@@ -63,19 +66,32 @@ export function createTextEditInput(options: TextEditInputOptions) {
       textEd.setCursorAt(localX, localY, shiftKey)
       setDrag({ type: 'text-select', startX: cx, startY: cy })
     }
-    editor.requestRender()
+    editor.textSelectionChanged()
     return true
   }
 
   function startTextEditingAt(hit: SceneNode, cx: number, cy: number) {
     editor.select([hit.id])
     editor.startTextEditing(hit.id)
+    // Text the editor refuses, such as path text without its font, stays selected only.
+    if (editor.state.editingTextId !== hit.id) return
     const textEd = editor.textEditor
     if (textEd) {
       const abs = editor.graph.getAbsolutePosition(hit.id)
       textEd.selectWordAt(cx - abs.x, cy - abs.y)
-      editor.requestRender()
+      editor.textSelectionChanged()
     }
+  }
+
+  /** Edits a sticky note's body or a connector's label with all of it selected, as FigJam does. */
+  function startGeneratedTextEditing(frame: SceneNode) {
+    const body = generatedFrameText(editor.graph, frame)
+    if (!body) return
+    editor.select([frame.id])
+    editor.startTextEditing(body.id)
+    if (editor.state.editingTextId !== body.id) return
+    editor.textEditor?.selectAll()
+    editor.textSelectionChanged()
   }
 
   function getContainerDescendantHit(
@@ -91,12 +107,24 @@ export function createTextEditInput(options: TextEditInputOptions) {
       : null
   }
 
-  function startSectionTitleRename(cx: number, cy: number): boolean {
-    const sectionTitle = hitTestSectionTitle(cx, cy)
-    if (sectionTitle?.type !== 'SECTION') return false
-    editor.select([sectionTitle.id])
-    onEditCanvasLabel?.('section-title', sectionTitle)
-    return true
+  /**
+   * Double-clicking the name above a section, frame or component renames it in place and keeps
+   * it selected, as in Figma. A locked layer or a library's read-only component keeps its name.
+   */
+  function startLabelRename(cx: number, cy: number): boolean {
+    const labels: [CanvasLabelKind, SceneNode | null][] = [
+      ['section-title', hitTestSectionTitle(cx, cy)],
+      ['component-label', hitTestComponentLabel(cx, cy)],
+      ['frame-title', hitTestFrameTitle(cx, cy)]
+    ]
+    for (const [kind, node] of labels) {
+      if (!node) continue
+      editor.select([node.id])
+      if (!node.locked && getNodeEditCapability(editor.graph, node.id).editable)
+        onEditCanvasLabel?.(kind, node)
+      return true
+    }
+    return false
   }
 
   function handleContainerDoubleClick(
@@ -115,7 +143,7 @@ export function createTextEditInput(options: TextEditInputOptions) {
     }
     const hit = getContainerDescendantHit(selectedId, cx, cy)
     editor.enterContainer(selectedId)
-    if (hit?.type === 'TEXT') startTextEditingAt(hit, cx, cy)
+    if (hit?.type === 'TEXT' && !editor.state.readOnly) startTextEditingAt(hit, cx, cy)
     else if (hit) editor.select([hit.id])
     else editor.clearSelection()
     return true
@@ -126,15 +154,22 @@ export function createTextEditInput(options: TextEditInputOptions) {
     if (editor.state.editingTextId) return
 
     const { cx, cy } = getCoords(e)
-    if (startSectionTitleRename(cx, cy)) return
+    const { readOnly } = editor.state
+    if (!readOnly && startLabelRename(cx, cy)) return
 
     const selectedId =
       editor.state.selectedIds.size === 1 ? [...editor.state.selectedIds][0] : undefined
     if (handleContainerDoubleClick(selectedId, cx, cy)) return
 
-    const hit =
-      hitTestSectionTitle(cx, cy) ?? hitTestComponentLabel(cx, cy) ?? hitTestInScope(cx, cy, true)
-    if (!hit) return
+    const found = hitTestInScope(cx, cy, true)
+    if (!found) return
+    // A generated frame's sublayers are edited through the frame.
+    const hit = generatedFrameOwner(editor.graph, found) ?? found
+    // A read-only document selects what a double-click would edit, as Figma does.
+    if (readOnly) {
+      editor.select([hit.id])
+      return
+    }
 
     if (hit.type === 'TEXT') {
       const isTopLevelText = hit.parentId === editor.state.currentPageId
@@ -148,6 +183,11 @@ export function createTextEditInput(options: TextEditInputOptions) {
 
     if (hit.type === 'VECTOR') {
       nodeEditEditor.enterNodeEditMode?.(hit.id)
+      return
+    }
+
+    if (generatedFrameText(editor.graph, hit)) {
+      startGeneratedTextEditing(hit)
       return
     }
 
